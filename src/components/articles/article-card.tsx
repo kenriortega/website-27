@@ -16,7 +16,12 @@ function formatPublishedAt(publishedAt: string) {
   }).format(new Date(publishedAt));
 }
 
-export function ArticleCard({ article }: ArticleCardProps) {
+export function ArticleCard({
+  article,
+  headingLevel = "h2",
+}: ArticleCardProps) {
+  const Heading = headingLevel;
+
   return (
     <article className="border border-border bg-surface p-6">
       <div className="flex flex-wrap items-center gap-3 font-mono text-sm text-muted">
@@ -27,9 +32,9 @@ export function ArticleCard({ article }: ArticleCardProps) {
         </time>
       </div>
 
-      <h2 className="mt-5 text-2xl font-semibold tracking-tight">
+      <Heading className="mt-5 text-2xl font-semibold tracking-tight">
         {article.title}
-      </h2>
+      </Heading>
 
       <p className="mt-3 leading-7 text-muted">{article.description}</p>
 

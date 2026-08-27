@@ -1,7 +1,9 @@
 import Link from "next/link";
 
+import { ArticleCard } from "@/components/articles/article-card";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
+import { getFeaturedArticles } from "@/lib/articles/registry";
 
 const contentAreas = [
   {
@@ -29,7 +31,9 @@ const contentAreas = [
   },
 ] as const;
 
-export default function Home() {
+export default async function Home() {
+  const featuredArticles = await getFeaturedArticles();
+
   return (
     <div
       id="inicio"
@@ -168,6 +172,47 @@ export default function Home() {
                     </Link>
                   ) : null}
                 </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="border-t border-border"
+          aria-labelledby="featured-articles-heading"
+        >
+          <div className="mx-auto max-w-6xl px-6 py-20">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="font-mono text-sm text-accent">
+                  Publicaciones seleccionadas
+                </p>
+                <h2
+                  id="featured-articles-heading"
+                  className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl"
+                >
+                  Artículos destacados
+                </h2>
+              </div>
+
+              <Link
+                href="/blog"
+                className="inline-flex min-h-11 items-center font-medium text-accent transition-colors hover:text-accent-strong"
+              >
+                Ver todos los artículos
+                <span className="ml-2" aria-hidden="true">
+                  →
+                </span>
+              </Link>
+            </div>
+
+            <div className="mt-10 grid gap-5 lg:grid-cols-3">
+              {featuredArticles.map((article) => (
+                <ArticleCard
+                  key={article.slug}
+                  article={article}
+                  headingLevel="h3"
+                />
               ))}
             </div>
           </div>
