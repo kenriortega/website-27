@@ -1,5 +1,7 @@
 import type { MDXComponents } from "mdx/types";
 
+import { ArticleImage } from "@/components/articles/article-image";
+
 const components = {
   h2: ({ children, ...props }) => (
     <h2
@@ -17,6 +19,24 @@ const components = {
     >
       {children}
     </h3>
+  ),
+
+  h4: ({ children, ...props }) => (
+    <h4
+      {...props}
+      className="mt-8 scroll-mt-24 text-lg font-semibold tracking-tight sm:text-xl"
+    >
+      {children}
+    </h4>
+  ),
+
+  h5: ({ children, ...props }) => (
+    <h5
+      {...props}
+      className="mt-7 scroll-mt-24 text-base font-semibold tracking-tight sm:text-lg"
+    >
+      {children}
+    </h5>
   ),
 
   p: ({ children, ...props }) => (
@@ -84,6 +104,8 @@ const components = {
   ),
 
   hr: (props) => <hr {...props} className="my-10 border-border" />,
+
+  ArticleImage,
 } satisfies MDXComponents;
 
 export function useMDXComponents(): MDXComponents {

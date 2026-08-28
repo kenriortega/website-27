@@ -5,6 +5,12 @@ export type ArticleLevel =
 
 export type ArticleLanguage = "es" | "en";
 
+export type ArticleSeries = {
+  slug: string;
+  title: string;
+  order: number;
+};
+
 export type ArticleMetadata = {
   title: string;
   description: string;
@@ -15,6 +21,7 @@ export type ArticleMetadata = {
   language: ArticleLanguage;
   draft: boolean;
   featured?: boolean;
+  series?: ArticleSeries;
   repositoryUrl?: string;
   youtubeUrl?: string;
 };

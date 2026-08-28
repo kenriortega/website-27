@@ -59,6 +59,21 @@ export default async function ArticlePage({
   return (
     <article className="mx-auto max-w-3xl">
       <header className="border-b border-border pb-10">
+        {metadata.draft ? (
+          <p className="mb-5 w-fit border border-accent px-3 py-1 font-mono text-xs uppercase tracking-wide text-accent">
+            Borrador
+          </p>
+        ) : null}
+
+        {metadata.series ? (
+          <p className="mb-4 font-mono text-sm text-accent">
+            {metadata.series.title}
+            <span className="text-muted">
+              {" "}· Parte {metadata.series.order}
+            </span>
+          </p>
+        ) : null}
+
         <div className="flex flex-wrap items-center gap-3 font-mono text-sm text-muted">
           <span className="text-accent">{metadata.level}</span>
           <span aria-hidden="true">·</span>
@@ -88,6 +103,20 @@ export default async function ArticlePage({
             </li>
           ))}
         </ul>
+
+        {metadata.repositoryUrl ? (
+          <a
+            href={metadata.repositoryUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-8 inline-flex min-h-11 items-center border border-border bg-surface px-4 py-2 font-medium text-accent transition-colors hover:border-accent hover:text-accent-strong"
+          >
+            Ver código del proyecto
+            <span className="ml-2" aria-hidden="true">
+              ↗
+            </span>
+          </a>
+        ) : null}
       </header>
 
       <div className="mt-10">

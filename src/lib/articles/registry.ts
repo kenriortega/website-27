@@ -7,6 +7,8 @@ const articleLoaders = {
 
 type ArticleSlug = keyof typeof articleLoaders;
 
+const canViewDrafts = process.env.NODE_ENV === "development";
+
 function isArticleSlug(slug: string): slug is ArticleSlug {
   return Object.prototype.hasOwnProperty.call(articleLoaders, slug);
 }
@@ -18,7 +20,7 @@ export async function getArticle(slug: string) {
 
   const article = await articleLoaders[slug]();
 
-  if (article.metadata.draft) {
+  if (article.metadata.draft && !canViewDrafts) {
     return undefined;
   }
 
@@ -41,7 +43,7 @@ export async function getAllArticles(): Promise<ArticleSummary[]> {
   );
 
   return articles
-    .filter((article) => !article.draft)
+    .filter((article) => canViewDrafts || !article.draft)
     .sort((first, second) =>
       second.publishedAt.localeCompare(first.publishedAt),
     );
