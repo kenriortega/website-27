@@ -3,6 +3,12 @@ import type { ArticleSummary } from "./types";
 const articleLoaders = {
   "bienvenida-a-kenridev": () =>
     import("@/content/articles/bienvenida-a-kenridev.mdx"),
+  "redis-serie-part-1": () =>
+    import("@/content/articles/redis-serie-part-1.mdx"),
+  "redis-serie-part-2": () =>
+    import("@/content/articles/redis-serie-part-2.mdx"),
+  "redis-serie-part-3": () =>
+    import("@/content/articles/redis-serie-part-3.mdx"),
 } as const;
 
 type ArticleSlug = keyof typeof articleLoaders;
