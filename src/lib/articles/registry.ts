@@ -17,6 +17,10 @@ const articleLoaders = {
     import("@/content/articles/redis-serie-dev-part-3.mdx"),
   "redis-serie-dev-part-4": () =>
     import("@/content/articles/redis-serie-dev-part-4.mdx"),
+  "kafka-serie-part-1": () =>
+    import("@/content/articles/kafka-serie-part-1.mdx"),
+  "kafka-serie-part-2": () =>
+    import("@/content/articles/kafka-serie-part-2.mdx"),
 } as const;
 
 type ArticleSlug = keyof typeof articleLoaders;
