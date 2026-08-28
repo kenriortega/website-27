@@ -9,6 +9,14 @@ const articleLoaders = {
     import("@/content/articles/redis-serie-part-2.mdx"),
   "redis-serie-part-3": () =>
     import("@/content/articles/redis-serie-part-3.mdx"),
+  "redis-serie-dev-part-1": () =>
+    import("@/content/articles/redis-serie-dev-part-1.mdx"),
+  "redis-serie-dev-part-2": () =>
+    import("@/content/articles/redis-serie-dev-part-2.mdx"),
+  "redis-serie-dev-part-3": () =>
+    import("@/content/articles/redis-serie-dev-part-3.mdx"),
+  "redis-serie-dev-part-4": () =>
+    import("@/content/articles/redis-serie-dev-part-4.mdx"),
 } as const;
 
 type ArticleSlug = keyof typeof articleLoaders;

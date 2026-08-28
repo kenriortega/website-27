@@ -1,0 +1,339 @@
+export const metadata = {
+  title: "Mejorando los tiempos de respuesta de nuestras API con Redis y Go",
+  description:
+    "Aprende a utilizar Redis como caché en una API escrita en Go para reducir tiempos de respuesta y llamadas a servicios externos.",
+  publishedAt: "2021-11-04",
+  tags: ["Redis", "Go", "APIs", "Caché"],
+  level: "intermedio",
+  language: "es",
+  draft: true,
+  series: {
+    slug: "redis-con-go",
+    title: "Redis con Go",
+    order: 1,
+  },
+  repositoryUrl: "https://github.com/kenriortega/app-redis-for-blog",
+};
+
+En este artículo continuaremos haciendo uso de nuestra base de datos [Redis](https://redis.io/), pero a través del lenguaje de programación [golang](https://golang.org/). Durante estos próximos artículos estaremos explorando las bondades que nos ofrece esta base de datos.
+
+Uno de los casos de uso más frecuentes que solemos afrontar en nuestra actividad de desarrollo es: ¿Cómo mejorar los tiempos de respuestas de nuestros servicios? (***api*** ***servers*** o aplicaciones ***CLI***).
+
+En el día de hoy trabajaremos con el recurso [coingecko](https://www.coingecko.com/es/api/documentation) esta ***API*** nos permite consultar: listado de las monedas y precios, datos históricos, datos relacionados con los contratos inteligentes, entre otras cosas, todo esto y más se puede observar en su documentación oficial, al final del artículo te compartiré los enlaces. Esta API tiene implementado `rate limit` 🛑 de  ` 50 calls/minute` y en este tutorial te enseñaré a reducir el tiempo de respuesta al consultar la API y además a ahorrar la mayor cantidad de llamadas al API durante un minuto.
+
+En este tutorial se asume que tenemos instalada la base de datos redis  y el lenguaje de programación [*golang downloads site*](https://golang.org/doc/install).
+
+## Configuración inicial de nuestro proyecto
+
+En este caso usaremos redis, pero a través de [podman](https://podman.io/). El cual es un motor de contenedores como docker.  Para más detalles consultar la [documentación oficial](https://podman.io/whatis.html).
+
+```bash
+# Download image
+podman pull quay.io/bitnami/redis
+# Run the container for our redis instance
+podman run --name redis --rm -e ALLOW_EMPTY_PASSWORD=yes -p 6379:6379 quay.io/bitnami/redis:latest
+```
+
+Procedemos a inicializar nuestro proyecto mediante los siguientes pasos:
+
+```bash
+
+mkdir app
+cd app
+
+# init project using go mod
+go mod init app
+
+# install redis package
+go get github.com/go-redis/redis/v8
+
+touch main.go
+```
+
+Quedando así nuestro fichero `main.go` donde estaremos realizando toda la lógica de nuestra aplicación.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("App to fetch all supported coins' id, name, and symbol")
+}
+
+```
+
+## Pues comencemos con nuestra consulta a la API
+
+En nuestra consulta a la API trabajaremos con el recurso `/coins/list` el cual nos retorna un listado con todas las monedas soportadas por la API.
+
+```bash
+curl -X 'GET' \
+  'https://api.coingecko.com/api/v3/coins/list' \
+  -H 'accept: application/json'
+
+```
+Este listado es la respuesta json después de consultar la api.
+```json
+[
+  {
+    "id": "01coin",
+    "symbol": "zoc",
+    "name": "01coin"
+  },
+  {
+    "id": "0-5x-long-algorand-token",
+    "symbol": "algohalf",
+    "name": "0.5X Long Algorand Token"
+  }
+  ...
+]
+```
+
+Teniendo como base inicial una muestra de la respuesta de nuestro *endpoint* `/coins/list` vamos a implementar una `struct` para nuestro tipo de dato `Coin` con las siguientes propiedades.
+
+```go
+// Coin ...
+type Coin struct {
+	ID     string `json:"id"`
+	Symbol string `json:"symbol"`
+	Name   string `json:"name"`
+}
+...
+```
+
+Luego procedemos a crear las siguientes variables y `structs` con las que trabajaremos durante este tutorial
+
+```go
+
+var (
+	urlBase          = "https://api.coingecko.com/api"
+	urlVersion       = "v3"
+	resourceCoinList = "coins/list"
+)
+
+// ResponseCoins ...
+type ResponseCoins struct {
+	Coins        []Coin `json:"coins,omitempty"`
+	Source       string `json:"soure,omitempty"`
+	ResponseTime string `json:"response_time,omitempty"`
+}
+```
+
+
+Comencemos a consumir nuestra `api`, en este caso, go nos provee un excelente `stdlib` con su paquete `net/http`. Con el cual crearemos nuestro método `getCoins`, el cual recibe por parámetros el `method` y el `endpoint` y retorna una estructura de tipo `ResponseCoin`
+
+
+```go
+// getCoins ...
+func getCoins(method, endpoint string) (responeCoins ResponseCoins, err error) {
+	client := &http.Client{}
+	requestUrl, err := url.Parse(endpoint)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest(method, requestUrl.String(), nil)
+	if err != nil {
+		return
+	}
+	req.Header.Add("Content-Type", "application/json")
+
+	res, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer DrainBody(res.Body)
+
+	coins := []Coin{}
+	if err = json.NewDecoder(res.Body).Decode(&coins); err != nil {
+		return
+	}
+	responeCoins.Coins = coins
+	responeCoins.Source = "API"
+
+	return
+}
+
+// DrainBody ...
+func DrainBody(respBody io.ReadCloser) {
+	// Callers should close resp.Body when done reading from it.
+	// If resp.Body is not closed, the Client's underlying RoundTripper
+	// (typically Transport) may not be able to re-use a persistent TCP
+	// connection to the server for a subsequent "keep-alive" request.
+	if respBody != nil {
+		// Drain any remaining Body and then close the connection.
+		// Without this closing connection would disallow re-using
+		// the same connection for future uses.
+		//  - http://stackoverflow.com/a/17961593/4465767
+		defer respBody.Close()
+		_, _ = io.Copy(ioutil.Discard, respBody)
+	}
+}
+```
+
+
+En este punto nuestro archivo `main.go` se encuentra así 👇 y nuestra función main haciendo una llamada al método `getCoins`.
+
+
+```go
+// vars & structs
+...
+
+func main() {
+	url := fmt.Sprintf("%s/%s/%s", urlBase, urlVersion, resourceCoinList)
+	fmt.Println("Fetching all coins from: ", url)
+
+	start := time.Now()
+	// call getCoins
+	resp, err := getCoins("GET", url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	elapsed := time.Since(start)
+	resp.ResponseTime = elapsed.String()
+
+    fmt.Printf("Fetched [%d] coins from source: %s in response time: %s\n", len(resp.Coins), resp.Source, resp.ResponseTime)
+}
+
+...
+// methods
+```
+
+Una vez que ejecutamos nuestro fichero `main.go` a través de la terminal de líneas de comando el resultado arrojado es el siguiente:
+
+```bash
+❯ go run main.go
+Fetching all coins from:  https://api.coingecko.com/api/v3/coins/list
+Fetched [10324] coins from source: API in response time: 690.43916ms
+```
+
+## Crear conexión a redis
+
+En esta parte crearemos un cliente de conexión a redis siguiendo la documentación que nos provee el paquete [go-redis](https://github.com/go-redis/redis).
+
+```go
+func GetRedisDbClient(ctx context.Context) *redis.Client {
+
+	clientInstance := redis.NewClient(&redis.Options{
+		Addr:         os.Getenv("REDIS_URI"),
+		Username:     "",
+		Password:     os.Getenv("REDIS_PASS"),
+		DB:           0,
+		DialTimeout:  60 * time.Second,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+	})
+
+	_, err := clientInstance.Ping(context.TODO()).Result()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return clientInstance
+}
+
+```
+
+Con nuestra implementación del método para la conexión a redis procedemos al paso más importante de este tutorial, y es aplicar la estrategia de *caching* de nuestra respuesta proveniente de la API. Así es como quedaría nuestro método `getCoins` usando nuestra instancia de redis.👇
+
+
+```go
+// getCoins ...
+func getCoins(
+	ctx context.Context,
+	rdb *redis.Client,
+	method, endpoint, key string,
+	duration time.Duration,
+) (responeCoins ResponseCoins, err error) {
+
+	result, err := rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		log.Println("key not found:", err)
+	} else if err != nil {
+		return
+	}
+
+	if result != "" {
+		err = json.Unmarshal([]byte(result), &responeCoins)
+		if err != nil {
+			return
+		}
+		responeCoins.Source = "cache"
+		return responeCoins, nil
+	}
+    ...
+
+	responeCoins.Coins = coins
+	responeCoins.Source = "API"
+	err = rdb.Set(ctx, key, responeCoins.ToJSON(), duration).Err()
+	if err != nil {
+		return
+	}
+	return
+}
+
+```
+
+
+Como podemos 👀 en el método, se refactorizó la firma de nuestra función para que aceptara por parámetros nuevos campos, tales como: nuestra instancia del cliente de redis, el contexto el cual es usado en todos los métodos de la librería `go-redis`, se agregó además la key por la cual chequearemos la entrada de nuevos registros hacia la base de datos y como valor agregado un parámetro `duration` para almacenar nuestra clave con un *TTL*.
+
+Puede que resulte curioso el método `ToJSON` de la variable `responseCoins`, este método convierte nuestra estructura a un objeto json dentro de un string para que pueda ser insertado en redis como valor de nuestra key, siguiendo este esquema de ***key:value***. Es válido recalcar que en este tutorial estamos utilizado el tipo de dato más básico que nos ofrece la base de datos redis que es `String`.
+
+
+```go
+// ToJSON ...
+func (r *ResponseCoins) ToJSON() string {
+	bytes, err := json.Marshal(r)
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+	return string(bytes)
+}
+```
+
+
+En este punto, 👀 nuestro método main quedaría con la siguiente estructura
+
+```go
+	...
+	rdb := GetRedisDbClient(context.Background())
+	...
+	resp, err := getCoins(
+		context.Background(),
+		rdb,
+		"GET",
+		url,
+		"coins:list",
+		10*time.Second,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+    ...
+```
+
+
+Si ejecutamos una vez más nuestro programa de go, este sería el resultado:
+
+```bash
+REDIS_URI="localhost:6379" REDIS_PASS=password go run main.go
+
+Fetching all coins from:  https://api.coingecko.com/api/v3/coins/list
+Fetched [10326] coins from source: caché in response time: 18.048576ms
+```
+
+Y como se puede apreciar, tenemos un tiempo de respuesta de unos 18ms. Pues sí, ha sido genial en este punto del tutorial observar como mejorar el `performance` de nuestra llamada al método `getCoins` a través de nuestra estrategia de caché. Esto impacta de forma positiva en nuestros usuarios y en el uso de nuestras aplicaciones, ya que de forma eficiente accedemos mucho más rápido a nuestra información.
+
+## Conclusión
+
+
+A través de este tutorial, pudimos desarrollar una aplicación en el lenguaje de programación go y Redis. Definimos una estrategia de Caché para consultar nuestra lista de monedas sin afectar el servicio de terceros, que en lo particular nos ofrece un `rate limit` 🛑 de  ` 50 calls/minute` ⏰.  En nuestro caso de uso, pudimos mejorar el tiempo de respuesta de la aplicación impactando en el `performance` de la misma, además de ahorrar nuestras preciadas 49 llamadas restantes a la `API` 😂.
+
+
+## Recursos
+
+- [Caching API Responses with Redis and Nodejs](https://www.youtube.com/watch?v=ztLsihiCHic)
+- [Go redis client](https://github.com/go-redis/redis)
+- [Swagger JSON API Documentation](https://www.coingecko.com/api/documentations/v3/swagger.json)
+- [Branding assets](https://www.coingecko.com/es/branding)
+- [CoinGecko API Token List](https://docs.google.com/spreadsheets/d/1wTTuxXt8n9q7C4NDXqQpI3wpKu1_5bGVmP9Xz0XGSyU/edit#gid=0)
