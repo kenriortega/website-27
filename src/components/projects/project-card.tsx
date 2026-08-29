@@ -5,6 +5,7 @@ import type { Project, ProjectStatus } from "@/lib/projects/types";
 type ProjectCardProps = {
   project: Project;
   headingLevel?: "h2" | "h3";
+  eager?: boolean;
 };
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -17,6 +18,7 @@ const statusLabels: Record<ProjectStatus, string> = {
 export function ProjectCard({
   project,
   headingLevel = "h2",
+  eager = false,
 }: ProjectCardProps) {
   const Heading = headingLevel;
   const coverImage = project.images[0];
@@ -30,6 +32,7 @@ export function ProjectCard({
           width={coverImage.width}
           height={coverImage.height}
           sizes="(max-width: 1024px) 100vw, 50vw"
+          loading={eager ? "eager" : "lazy"}
           className="aspect-[16/7] w-full border-b border-border bg-surface-elevated object-cover"
         />
       ) : null}

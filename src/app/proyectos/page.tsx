@@ -35,8 +35,12 @@ export default function ProjectsPage() {
         aria-label="Catálogo de proyectos"
       >
         {projects.length > 0 ? (
-          projects.map((project) => (
-            <ProjectCard key={project.slug} project={project} />
+          projects.map((project, index) => (
+            <ProjectCard
+              key={project.slug}
+              project={project}
+              eager={index < 2}
+            />
           ))
         ) : (
           <p className="border border-border bg-surface p-6 text-muted">
