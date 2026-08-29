@@ -3,7 +3,9 @@ import Link from "next/link";
 import { ArticleCard } from "@/components/articles/article-card";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
+import { ProjectCard } from "@/components/projects/project-card";
 import { getFeaturedArticles } from "@/lib/articles/registry";
+import { getFeaturedProjects } from "@/lib/projects/registry";
 
 const contentAreas = [
   {
@@ -21,6 +23,8 @@ const contentAreas = [
     title: "Proyectos",
     description:
       "Código funcional y reproducible para explorar cada concepto con mayor profundidad.",
+    href: "/proyectos",
+    linkLabel: "Explorar proyectos",
   },
   {
     id: "vlogs",
@@ -33,6 +37,7 @@ const contentAreas = [
 
 export default async function Home() {
   const featuredArticles = await getFeaturedArticles();
+  const featuredProjects = getFeaturedProjects();
 
   return (
     <div
@@ -68,12 +73,12 @@ export default async function Home() {
               >
                 Leer artículos
               </Link>
-              <a
+              <Link
                 className="inline-flex min-h-11 items-center justify-center border border-border bg-surface px-5 py-3 font-medium transition-colors hover:border-accent hover:text-accent"
-                href="#proyectos"
+                href="/proyectos"
               >
                 Explorar proyectos
-              </a>
+              </Link>
             </div>
 
             <ul
@@ -131,6 +136,47 @@ export default async function Home() {
               </p>
             </div>
           </aside>
+        </section>
+
+        <section
+          className="border-t border-border"
+          aria-labelledby="featured-projects-heading"
+        >
+          <div className="mx-auto max-w-6xl px-6 py-20">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="font-mono text-sm text-accent">
+                  Soluciones construidas
+                </p>
+                <h2
+                  id="featured-projects-heading"
+                  className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl"
+                >
+                  Proyectos destacados
+                </h2>
+              </div>
+
+              <Link
+                href="/proyectos"
+                className="inline-flex min-h-11 items-center font-medium text-accent transition-colors hover:text-accent-strong"
+              >
+                Ver todos los proyectos
+                <span className="ml-2" aria-hidden="true">
+                  →
+                </span>
+              </Link>
+            </div>
+
+            <div className="mt-10 grid gap-5 lg:grid-cols-3">
+              {featuredProjects.map((project) => (
+                <ProjectCard
+                  key={project.slug}
+                  project={project}
+                  headingLevel="h3"
+                />
+              ))}
+            </div>
+          </div>
         </section>
 
         <section

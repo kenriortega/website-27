@@ -120,7 +120,7 @@ const projects = [
       "Fastify MessagePack fue mi primera colaboración open source. El plugin permite que aplicaciones Fastify negocien respuestas y procesen solicitudes en formato MessagePack, manteniendo la experiencia habitual de trabajo con objetos y JSON dentro de la aplicación.",
     year: 2021,
     status: "open-source",
-    featured: true,
+    featured: false,
     technologies: [
       "JavaScript",
       "Node.js",
