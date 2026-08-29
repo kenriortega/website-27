@@ -10,7 +10,10 @@ export default function BlogLayout({ children }: BlogLayoutProps) {
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <SiteHeader />
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-16 sm:py-20">
+      <main
+        id="main-content"
+        className="mx-auto w-full max-w-6xl flex-1 px-6 py-16 sm:py-20"
+      >
         {children}
       </main>
 

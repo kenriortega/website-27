@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { ArticleCard } from "@/components/articles/article-card";
@@ -6,6 +7,37 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { ProjectCard } from "@/components/projects/project-card";
 import { getFeaturedArticles } from "@/lib/articles/registry";
 import { getFeaturedProjects } from "@/lib/projects/registry";
+import { siteConfig } from "@/lib/site";
+
+const description = siteConfig.description;
+
+export const metadata: Metadata = {
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    title: siteConfig.name,
+    description,
+    url: "/",
+    siteName: siteConfig.name,
+    locale: "es_ES",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "KenriDev: desarrollo de software, DevOps y Data Engineering",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteConfig.name,
+    description,
+    images: ["/opengraph-image"],
+  },
+};
 
 const contentAreas = [
   {
@@ -48,7 +80,7 @@ export default async function Home() {
     >
       <SiteHeader />
 
-      <main>
+      <main id="main-content">
         <section className="mx-auto grid max-w-6xl gap-12 px-6 py-20 md:py-28 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
           <div>
             <p className="mb-6 w-fit border border-border bg-surface px-3 py-1.5 font-mono text-sm text-accent">
