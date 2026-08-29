@@ -32,6 +32,8 @@ const contentAreas = [
     title: "Vlogs",
     description:
       "El proceso detrás del código: experimentos, errores, decisiones y resultados.",
+    href: "/vlogs",
+    linkLabel: "Próximamente",
   },
 ] as const;
 

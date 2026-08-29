@@ -10,7 +10,7 @@ const navigation = [
     label: "Proyectos",
   },
   {
-    href: "/#vlogs",
+    href: "/vlogs",
     label: "Vlogs",
   },
 ] as const;
