@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 import type { Project, ProjectStatus } from "@/lib/projects/types";
 
@@ -64,17 +65,29 @@ export function ProjectCard({
           ))}
         </ul>
 
-        <a
-          href={project.repositoryUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-auto inline-flex min-h-11 items-center pt-6 font-medium text-accent transition-colors hover:text-accent-strong"
-        >
-          Ver repositorio
-          <span className="ml-2" aria-hidden="true">
-            ↗
-          </span>
-        </a>
+        <div className="mt-auto flex flex-wrap items-center gap-x-5 gap-y-2 pt-6">
+          <Link
+            href={`/proyectos/${project.slug}`}
+            className="inline-flex min-h-11 items-center font-medium text-accent transition-colors hover:text-accent-strong"
+          >
+            Ver proyecto
+            <span className="ml-2" aria-hidden="true">
+              →
+            </span>
+          </Link>
+
+          <a
+            href={project.repositoryUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-11 items-center font-medium text-muted transition-colors hover:text-accent"
+          >
+            Repositorio
+            <span className="ml-2" aria-hidden="true">
+              ↗
+            </span>
+          </a>
+        </div>
       </div>
     </article>
   );

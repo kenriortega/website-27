@@ -144,7 +144,7 @@ const projects = [
     summary:
       "Filtro de Fluent Bit escrito en Rust y compilado a WebAssembly para transformar logs W3C de IIS en eventos JSON estructurados.",
     overview:
-      "Fluent Bit Filter for IIS procesa registros W3C personalizados generados por Internet Information Services. El proyecto implementa en Rust un parser que se compila a WebAssembly y se ejecuta como filtro dentro de Fluent Bit, preparando los eventos para su envío a sistemas de almacenamiento y observabilidad como ClickHouse y Grafana.",
+      "Fluent Bit Filter for IIS procesa registros W3C personalizados generados por Internet Information Services. El proyecto implementa en Rust un parser que se compila a WebAssembly y se ejecuta como filtro dentro de Fluent Bit, preparando los eventos para su envío a sistemas de almacenamiento y observabilidad como ClickHouse y Grafana. La solución fue incorporada como ejemplo en la documentación oficial de Fluent Bit y desarrollada posteriormente en una publicación técnica para Chronosphere.",
     year: 2023,
     status: "open-source",
     featured: true,
@@ -169,16 +169,37 @@ const projects = [
       "Pruebas automatizadas del parser.",
       "Compilación y publicación del binario WebAssembly mediante GitHub Actions.",
       "Distribución con versiones etiquetadas y licencia Apache 2.0.",
+      "Incluido como ejemplo de filtro WASM para IIS en la documentación oficial de Fluent Bit.",
+      "Caso práctico publicado en Chronosphere con el pipeline completo de observabilidad.",
     ],
     videos: [],
     images: [
       {
-        src: "/projects/flb-filter-iis/cover.png",
-        alt: "Flujo de logs sin estructurar transformándose en eventos organizados mediante un núcleo de procesamiento central",
-        width: 1912,
-        height: 823,
+        src: "/projects/flb-filter-iis/iis-observability-pipeline.png",
+        alt: "Arquitectura de observabilidad que envía logs W3C de IIS a Fluent Bit con WebAssembly y Rust, y después a ClickHouse y Grafana",
+        width: 768,
+        height: 247,
         caption:
-          "Representación conceptual del procesamiento de logs IIS mediante Rust, WebAssembly y Fluent Bit.",
+          "Pipeline de observabilidad: IIS envía logs W3C a Fluent Bit, el filtro WebAssembly escrito en Rust los transforma a JSON y ClickHouse los almacena para visualizarlos con Grafana.",
+      },
+    ],
+    references: [
+      {
+        type: "documentation",
+        title: "Wasm filter plugins",
+        publisher: "Fluent Bit Official Manual",
+        url: "https://docs.fluentbit.io/manual/fluent-bit-for-developers/wasm-filter-plugins",
+        description:
+          "Documentación oficial que presenta flb_filter_iis como ejemplo de filtro WebAssembly escrito en Rust para procesar logs W3C de IIS.",
+      },
+      {
+        type: "publication",
+        title: "Custom IIS logging with Fluent Bit and Wasm",
+        publisher: "Chronosphere",
+        url: "https://chronosphere.io/learn/iis-logging-fluent-bit-wasm/",
+        description:
+          "Artículo técnico escrito por KenriDev sobre la configuración de IIS, el filtro Rust/WASM, el almacenamiento en ClickHouse y la visualización con Grafana.",
+        publishedAt: "2024-08-30",
       },
     ],
   },

@@ -18,6 +18,15 @@ export type ProjectImage = {
   caption?: string;
 };
 
+export type ProjectReference = {
+  type: "documentation" | "publication";
+  title: string;
+  publisher: string;
+  url: string;
+  description: string;
+  publishedAt?: string;
+};
+
 export type Project = {
   slug: string;
   title: string;
@@ -32,4 +41,5 @@ export type Project = {
   highlights: string[];
   videos: ProjectVideo[];
   images: ProjectImage[];
+  references?: ProjectReference[];
 };

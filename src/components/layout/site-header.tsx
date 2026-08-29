@@ -6,7 +6,7 @@ const navigation = [
     label: "Artículos",
   },
   {
-    href: "/#proyectos",
+    href: "/proyectos",
     label: "Proyectos",
   },
   {
