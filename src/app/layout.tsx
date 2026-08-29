@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { siteConfig } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,12 +14,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: siteConfig.url,
   title: {
     default: "KenriDev",
     template: "%s | KenriDev",
   },
-  description:
-    "Artículos, proyectos y vlogs en español sobre desarrollo de software, DevOps y Data Engineering.",
+  description: siteConfig.description,
+  authors: [{ name: siteConfig.author, url: siteConfig.url }],
+  creator: siteConfig.author,
+  publisher: siteConfig.author,
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

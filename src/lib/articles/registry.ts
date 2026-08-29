@@ -1,3 +1,10 @@
+import "server-only";
+
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { cache } from "react";
+
+import { estimateReadingTime } from "./reading-time";
 import type { ArticleSummary } from "./types";
 
 const articleLoaders = {
@@ -31,24 +38,58 @@ function isArticleSlug(slug: string): slug is ArticleSlug {
   return Object.prototype.hasOwnProperty.call(articleLoaders, slug);
 }
 
-export async function getArticle(slug: string) {
+const loadArticle = cache(async function loadArticle(slug: ArticleSlug) {
+  return articleLoaders[slug]();
+});
+
+async function readArticleSource(slug: ArticleSlug) {
+  return readFile(
+    join(process.cwd(), "src", "content", "articles", `${slug}.mdx`),
+    "utf8",
+  );
+}
+
+export const getArticleMetadata = cache(async function getArticleMetadata(
+  slug: string,
+) {
   if (!isArticleSlug(slug)) {
     return undefined;
   }
 
-  const article = await articleLoaders[slug]();
+  const { metadata } = await loadArticle(slug);
 
-  if (article.metadata.draft && !canViewDrafts) {
+  if (metadata.draft && !canViewDrafts) {
     return undefined;
   }
 
   return {
     slug,
-    ...article,
+    metadata,
   };
-}
+});
 
-export async function getAllArticles(): Promise<ArticleSummary[]> {
+export const getArticle = cache(async function getArticle(slug: string) {
+  const articleMetadata = await getArticleMetadata(slug);
+
+  if (!articleMetadata) {
+    return undefined;
+  }
+
+  const [article, source] = await Promise.all([
+    loadArticle(articleMetadata.slug),
+    readArticleSource(articleMetadata.slug),
+  ]);
+
+  return {
+    slug,
+    ...article,
+    readingTime: estimateReadingTime(source),
+  };
+});
+
+export const getAllArticles = cache(async function getAllArticles(): Promise<
+  ArticleSummary[]
+> {
   const articles = await Promise.all(
     Object.entries(articleLoaders).map(async ([slug, loadArticle]) => {
       const { metadata } = await loadArticle();
@@ -65,6 +106,30 @@ export async function getAllArticles(): Promise<ArticleSummary[]> {
     .sort((first, second) =>
       second.publishedAt.localeCompare(first.publishedAt),
     );
+});
+
+export async function getSeriesNavigation(
+  currentSlug: string,
+  seriesSlug: string,
+) {
+  const articles = (await getAllArticles())
+    .filter((article) => article.series?.slug === seriesSlug)
+    .sort(
+      (first, second) =>
+        (first.series?.order ?? 0) - (second.series?.order ?? 0),
+    );
+  const currentIndex = articles.findIndex(
+    (article) => article.slug === currentSlug,
+  );
+
+  if (currentIndex === -1) {
+    return {};
+  }
+
+  return {
+    previous: articles[currentIndex - 1],
+    next: articles[currentIndex + 1],
+  };
 }
 
 export async function getFeaturedArticles(

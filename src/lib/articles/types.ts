@@ -20,10 +20,16 @@ export type ArticleMetadata = {
   level: ArticleLevel;
   language: ArticleLanguage;
   draft: boolean;
+  legacy?: boolean;
   featured?: boolean;
   series?: ArticleSeries;
   repositoryUrl?: string;
   youtubeUrl?: string;
+};
+
+export type ArticleReadingTime = {
+  minutes: number;
+  words: number;
 };
 
 export type ArticleSummary = ArticleMetadata & {
