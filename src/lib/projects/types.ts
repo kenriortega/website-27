@@ -32,6 +32,10 @@ export type Project = {
   title: string;
   summary: string;
   overview: string;
+  challenge?: string;
+  solution?: string;
+  contribution?: string;
+  learnings?: string[];
   year: number;
   status: ProjectStatus;
   featured?: boolean;

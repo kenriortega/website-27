@@ -8,6 +8,19 @@ const projects = [
       "Pipeline de datos para recopilar y analizar issues de proyectos open source.",
     overview:
       "El proyecto extrae issues desde GitHub y Jira, orquesta su procesamiento con Apache Airflow, los publica en Apache Kafka, los almacena en ClickHouse y permite explorar sus métricas mediante Apache Superset.",
+    challenge:
+      "Los equipos y proyectos open source pueden distribuir el seguimiento de incidencias entre plataformas como GitHub y Jira. El reto consistía en recopilar esa información, normalizarla y ofrecer una vista centralizada que permitiera analizar el estado y la evolución de los issues.",
+    solution:
+      "Diseñé un pipeline de datos que extrae los issues desde sus plataformas de origen, orquesta el procesamiento con Apache Airflow sobre Kubernetes y distribuye los eventos mediante Apache Kafka. Los datos procesados se almacenan en ClickHouse y se presentan en dashboards de Apache Superset para facilitar su exploración.",
+    contribution:
+      "Participé en el diseño e implementación de la arquitectura, la integración entre sus componentes y la creación de un entorno reproducible con contenedores. También preparé y realicé una presentación pública para explicar las decisiones técnicas y demostrar el funcionamiento de la solución.",
+    learnings: [
+      "Diseño de pipelines de datos orientados a eventos.",
+      "Orquestación de procesos con Apache Airflow y Kubernetes.",
+      "Integración de Apache Kafka con ClickHouse.",
+      "Modelado y visualización de información con Apache Superset.",
+      "Comunicación de decisiones técnicas mediante una exposición pública.",
+    ],
     year: 2022,
     status: "case-study",
     featured: true,

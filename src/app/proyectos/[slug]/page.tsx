@@ -109,6 +109,26 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
     )
   ).filter((article) => article !== undefined);
   const canonicalUrl = getAbsoluteUrl(`/proyectos/${project.slug}`);
+  const narrativeSections = [
+    {
+      title: "El problema",
+      content: project.challenge,
+    },
+    {
+      title: "La solución",
+      content: project.solution,
+    },
+    {
+      title: "Mi participación",
+      content: project.contribution,
+    },
+  ].filter(
+    (section): section is { title: string; content: string } =>
+      section.content !== undefined,
+  );
+  const hasEditorialContent =
+    narrativeSections.length > 0 ||
+    (project.learnings !== undefined && project.learnings.length > 0);
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
@@ -226,6 +246,59 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
                 </figure>
               ))}
             </div>
+          </section>
+        ) : null}
+
+        {hasEditorialContent ? (
+          <section
+            className="mt-12 border-t border-border pt-12"
+            aria-labelledby="project-story-heading"
+          >
+            <h2
+              id="project-story-heading"
+              className="text-2xl font-semibold tracking-tight sm:text-3xl"
+            >
+              Historia del proyecto
+            </h2>
+
+            {narrativeSections.length > 0 ? (
+              <div className="mt-6 grid gap-4 lg:grid-cols-3">
+                {narrativeSections.map((section) => (
+                  <div
+                    key={section.title}
+                    className="border border-border bg-surface p-5"
+                  >
+                    <h3 className="text-lg font-semibold text-foreground">
+                      {section.title}
+                    </h3>
+                    <p className="mt-3 leading-7 text-muted">
+                      {section.content}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {project.learnings && project.learnings.length > 0 ? (
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold text-foreground">
+                  Aprendizajes
+                </h3>
+                <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {project.learnings.map((learning) => (
+                    <li
+                      key={learning}
+                      className="border border-border bg-surface p-4 leading-7 text-muted"
+                    >
+                      <span className="mr-2 text-accent" aria-hidden="true">
+                        →
+                      </span>
+                      {learning}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
