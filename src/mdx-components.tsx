@@ -103,6 +103,52 @@ const components = {
     </pre>
   ),
 
+  table: ({ children, ...props }) => (
+    <div
+      className="my-6 overflow-x-auto border border-border"
+      role="region"
+      aria-label="Tabla desplazable horizontalmente"
+      tabIndex={0}
+    >
+      <table
+        {...props}
+        className="w-full min-w-2xl border-collapse text-left text-sm sm:text-base"
+      >
+        {children}
+      </table>
+    </div>
+  ),
+
+  thead: ({ children, ...props }) => (
+    <thead {...props} className="bg-surface-elevated text-foreground">
+      {children}
+    </thead>
+  ),
+
+  th: ({ children, ...props }) => (
+    <th
+      {...props}
+      className="border-b border-r border-border px-4 py-3 font-semibold last:border-r-0"
+    >
+      {children}
+    </th>
+  ),
+
+  td: ({ children, ...props }) => (
+    <td
+      {...props}
+      className="border-b border-r border-border px-4 py-3 align-top leading-6 text-muted last:border-r-0"
+    >
+      {children}
+    </td>
+  ),
+
+  tr: ({ children, ...props }) => (
+    <tr {...props} className="last:[&_td]:border-b-0">
+      {children}
+    </tr>
+  ),
+
   hr: (props) => <hr {...props} className="my-10 border-border" />,
 
   ArticleImage,
