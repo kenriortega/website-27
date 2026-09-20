@@ -1,0 +1,643 @@
+export const metadata = {
+  title: "Cómo reutilizar pipelines remotos en Azure DevOps",
+  description:
+    "Aprende a consumir plantillas YAML almacenadas en otro repositorio de Azure DevOps mediante un ejemplo educativo para una aplicación Next.js.",
+  publishedAt: "2026-09-20",
+  tags: ["Azure DevOps", "CI/CD", "YAML", "Next.js", "DevOps"],
+  level: "intermedio",
+  language: "es",
+  draft: true,
+  featured: false,
+  series: {
+    slug: "pipelines-reutilizables-remotos",
+    title: "Pipelines reutilizables desde repositorios remotos",
+    order: 1,
+  },
+};
+
+Cuando varios proyectos necesitan ejecutar las mismas validaciones, copiar un
+pipeline completo en cada repositorio parece una solución rápida. Sin embargo,
+con el tiempo cada copia puede evolucionar de forma diferente: una aplicación
+actualiza la versión de Node.js, otra deja de ejecutar el análisis estático y
+una tercera conserva pasos que ya no son necesarios.
+
+En este artículo construiremos un ejemplo educativo para centralizar la lógica
+de integración continua de una aplicación Next.js. El repositorio del website
+mantendrá una definición pequeña y delegará los pasos reutilizables en una
+plantilla YAML almacenada en otro repositorio de Azure DevOps.
+
+El objetivo no es configurar un pipeline real para este sitio ni realizar un
+despliegue. Utilizaremos archivos de ejemplo para comprender el patrón, sus
+permisos y las decisiones que debemos tomar antes de adoptarlo en un entorno
+de trabajo.
+
+## El problema: pipelines duplicados
+
+Imaginemos que administramos varios websites construidos con Next.js. Todos
+necesitan realizar un proceso parecido:
+
+1. Preparar Node.js y pnpm.
+2. Instalar las dependencias respetando el archivo de bloqueo.
+3. Ejecutar ESLint.
+4. Comprobar los tipos de TypeScript.
+5. Generar el build de producción.
+
+Si cada repositorio contiene una implementación completa, cualquier cambio
+debe repetirse en todos ellos. Esta duplicación aumenta el mantenimiento y
+hace más difícil responder preguntas sencillas: ¿todos los proyectos utilizan
+la misma versión de Node.js?, ¿todos ejecutan las mismas verificaciones?, ¿qué
+repositorios adoptaron la corrección más reciente?
+
+Una alternativa es separar las responsabilidades:
+
+- El repositorio de la aplicación decide **cuándo** ejecutar el pipeline y qué
+  parámetros necesita.
+- El repositorio de plantillas define **cómo** instalar, validar y compilar la
+  aplicación.
+
+## ¿Estamos ejecutando un pipeline remoto?
+
+En este escenario no iniciamos un segundo pipeline. Azure DevOps obtiene la
+plantilla desde el repositorio declarado en `resources.repositories`, la
+expande al preparar el plan de ejecución y ejecuta el resultado como parte del
+pipeline consumidor.
+
+Esta distinción es importante porque una plantilla no se comporta como un
+repositorio clonado durante todos los pasos. De manera predeterminada, sus
+archivos sirven para construir la definición final del pipeline. Si necesitáramos
+ejecutar scripts que viven en el repositorio remoto, tendríamos que incluir un
+`checkout` adicional de ese repositorio.
+
+Puedes consultar el comportamiento y las limitaciones en la
+[documentación oficial sobre plantillas de Azure Pipelines](https://learn.microsoft.com/azure/devops/pipelines/process/templates?view=azure-devops).
+
+## Arquitectura del ejemplo
+
+Utilizaremos dos repositorios ficticios con responsabilidades diferentes:
+
+```text
+website
+└── azure-pipelines.yml
+
+azure-pipeline-templates
+└── nextjs
+    └── continuous-integration.yml
+```
+
+El flujo conceptual será el siguiente:
+
+```text
+Pull request o cambio en el website
+                 │
+                 ▼
+       azure-pipelines.yml
+                 │
+                 │ declara resources.repositories
+                 ▼
+     azure-pipeline-templates
+                 │
+                 │ aporta la plantilla reutilizable
+                 ▼
+     Validaciones sobre el website
+       ├── instalación
+       ├── lint
+       ├── TypeScript
+       └── build
+```
+
+El archivo `azure-pipelines.yml` seguirá perteneciendo al website. Allí
+definiremos los triggers, la referencia al repositorio remoto y los parámetros
+que enviaremos a la plantilla. La plantilla central contendrá los stages, jobs
+y steps reutilizables.
+
+## Alcance de la demostración
+
+Los fragmentos de este artículo serán deliberadamente genéricos:
+
+- No crearán recursos reales en Azure DevOps.
+- No contendrán nombres de organizaciones o proyectos privados.
+- No utilizarán credenciales, tokens ni secretos reales.
+- No desplegarán el website.
+- No se guardarán dentro de una ruta que Azure DevOps ejecute automáticamente.
+
+En la siguiente sección construiremos primero el archivo consumidor y después
+la plantilla remota. De esta forma podremos observar qué decisiones pertenecen
+a cada repositorio.
+
+## El pipeline consumidor
+
+El repositorio `website` necesita un archivo de entrada que Azure DevOps pueda
+asociar con una definición de pipeline. Su responsabilidad será declarar
+cuándo se ejecuta el proceso, localizar la plantilla remota y proporcionar los
+valores particulares de esta aplicación.
+
+```yaml
+# Repositorio: website
+# Archivo: azure-pipelines.yml
+
+trigger:
+  branches:
+    include:
+      - main
+      - development
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: SharedPipelines/azure-pipeline-templates
+      ref: refs/tags/v1.0.0
+
+stages:
+  - template: nextjs/continuous-integration.yml@templates
+    parameters:
+      nodeVersion: "24.x"
+      pnpmVersion: "10"
+      runLint: true
+      runTypeCheck: true
+      runBuild: true
+```
+
+Este archivo no contiene los pasos que instalarán o compilarán el website. En
+su lugar, establece el contrato entre la aplicación y el repositorio que
+mantiene la automatización compartida.
+
+### El trigger permanece en el repositorio consumidor
+
+El bloque `trigger` ejecutaría el pipeline cuando se envíen cambios a `main` o
+`development`. Azure DevOps procesa los triggers desde el archivo principal;
+no debemos trasladarlos a la plantilla reutilizable.
+
+```yaml
+trigger:
+  branches:
+    include:
+      - main
+      - development
+```
+
+En este ejemplo asumimos que `website` está alojado en Azure Repos Git. Por
+esa razón no añadimos un bloque `pr:`. Azure Repos configura la validación de
+pull requests mediante una política **Build validation** sobre la rama de
+destino. Los triggers YAML de pull requests corresponden a repositorios de
+GitHub y Bitbucket Cloud.
+
+La diferencia está documentada en
+[Build Azure Repos Git repositories](https://learn.microsoft.com/azure/devops/pipelines/repos/azure-repos-git?view=azure-devops).
+
+### Declarar el repositorio remoto
+
+`resources.repositories` informa a Azure DevOps de que el pipeline utilizará
+otro repositorio:
+
+```yaml
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: SharedPipelines/azure-pipeline-templates
+      ref: refs/tags/v1.0.0
+```
+
+Cada propiedad cumple una función concreta:
+
+- `repository` crea el alias local `templates`. No es el nombre real del
+  repositorio.
+- `type: git` indica que el recurso se encuentra en Azure Repos Git.
+- `name` identifica el repositorio. Al estar en otro proyecto de la misma
+  organización utiliza el formato `<proyecto>/<repositorio>`.
+- `ref` fija la versión de las plantillas que consumirá el website.
+
+Si ambos repositorios pertenecieran al mismo proyecto, `name` podría contener
+solamente `azure-pipeline-templates`. Si estuvieran en organizaciones
+diferentes, necesitaríamos una service connection autorizada y la propiedad
+`endpoint`.
+
+Azure DevOps admite también recursos de tipo `github`, `githubenterprise` y
+`bitbucket`. En esos escenarios cambian el formato de `name` y el mecanismo de
+autorización, pero el propósito del alias sigue siendo el mismo. Puedes revisar
+las variantes en la
+[documentación de repository resources](https://learn.microsoft.com/azure/devops/pipelines/process/resources?view=azure-devops#repositories-resource).
+
+### Fijar una versión de la plantilla
+
+Podríamos apuntar a `refs/heads/main`, pero entonces cualquier modificación
+del repositorio central afectaría a los consumidores en su próxima ejecución.
+Para este ejemplo utilizamos un tag:
+
+```yaml
+ref: refs/tags/v1.0.0
+```
+
+El tag permite actualizar la plantilla de forma intencional. Cuando exista una
+versión nueva, cada aplicación podrá cambiar a `refs/tags/v1.1.0` después de
+revisar sus cambios. En un entorno que requiera máxima reproducibilidad también
+podríamos fijar el SHA completo de un commit.
+
+### Consumir la plantilla y enviar parámetros
+
+La referencia combina la ruta del archivo con el alias del repositorio:
+
+```yaml
+stages:
+  - template: nextjs/continuous-integration.yml@templates
+    parameters:
+      nodeVersion: "24.x"
+      pnpmVersion: "10"
+      runLint: true
+      runTypeCheck: true
+      runBuild: true
+```
+
+La parte situada antes de `@` es la ruta de la plantilla dentro de
+`azure-pipeline-templates`. La parte posterior es el alias declarado en
+`resources.repositories`.
+
+Los parámetros permiten que la plantilla conserve una implementación común
+sin imponer exactamente el mismo comportamiento a todos sus consumidores. Por
+ejemplo, un proyecto podría desactivar temporalmente el build mientras otro
+ejecuta todas las verificaciones.
+
+Los valores se validan y expanden al compilar la definición YAML, antes de que
+comiencen los jobs. Por eso utilizaremos expresiones de plantilla
+`${{ parameters.nombre }}` dentro del archivo remoto y no variables evaluadas
+durante la ejecución.
+
+En el próximo paso construiremos `continuous-integration.yml` y veremos cómo
+declarar esos parámetros con tipos y valores predeterminados.
+
+## La plantilla remota
+
+Ahora cambiamos al repositorio `azure-pipeline-templates`. Dentro de la carpeta
+`nextjs` crearemos una plantilla de stages llamada
+`continuous-integration.yml`.
+
+```yaml
+# Repositorio: azure-pipeline-templates
+# Archivo: nextjs/continuous-integration.yml
+
+parameters:
+  - name: vmImage
+    type: string
+    default: "ubuntu-latest"
+
+  - name: nodeVersion
+    type: string
+    default: "24.x"
+
+  - name: pnpmVersion
+    type: string
+    default: "10"
+
+  - name: runLint
+    type: boolean
+    default: true
+
+  - name: runTypeCheck
+    type: boolean
+    default: true
+
+  - name: runBuild
+    type: boolean
+    default: true
+
+stages:
+  - stage: Validate
+    displayName: "Validate Next.js application"
+
+    jobs:
+      - job: Quality
+        displayName: "Install, validate and build"
+
+        pool:
+          vmImage: ${{ parameters.vmImage }}
+
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - task: UseNode@1
+            displayName: "Use Node.js ${{ parameters.nodeVersion }}"
+            inputs:
+              version: ${{ parameters.nodeVersion }}
+              checkLatest: false
+
+          - script: npm install --global pnpm@${{ parameters.pnpmVersion }}
+            displayName: "Install pnpm ${{ parameters.pnpmVersion }}"
+
+          - script: pnpm install --frozen-lockfile
+            displayName: "Install dependencies"
+
+          - ${{ if eq(parameters.runLint, true) }}:
+              - script: pnpm lint
+                displayName: "Run ESLint"
+
+          - ${{ if eq(parameters.runTypeCheck, true) }}:
+              - script: pnpm exec tsc --noEmit --incremental false
+                displayName: "Check TypeScript"
+
+          - ${{ if eq(parameters.runBuild, true) }}:
+              - script: pnpm build
+                displayName: "Build Next.js application"
+```
+
+Aunque la plantilla vive en otro repositorio, los comandos se ejecutan sobre
+el código del website. La instrucción `checkout: self` obtiene el repositorio
+que contiene el pipeline consumidor, no el repositorio identificado con el
+alias `templates`.
+
+### Parámetros con tipos y valores predeterminados
+
+La primera parte define el contrato público de la plantilla:
+
+```yaml
+parameters:
+  - name: nodeVersion
+    type: string
+    default: "24.x"
+
+  - name: runLint
+    type: boolean
+    default: true
+```
+
+Los valores predeterminados permiten consumir la plantilla sin configurar cada
+opción. El archivo principal solo sobrescribe aquello que necesita cambiar.
+Además, declarar explícitamente `type: boolean` evita interpretar los textos
+`"true"` o `"false"` como valores booleanos de forma accidental.
+
+La plantilla ofrece parámetros para las versiones de Node.js y pnpm, la imagen
+del agente y las verificaciones opcionales. En un sistema compartido podríamos
+exponer menos opciones si queremos imponer una política uniforme en todos los
+repositorios.
+
+### Preparar Node.js y pnpm
+
+La tarea `UseNode@1` localiza una versión compatible de Node.js, la descarga si
+es necesario y la incorpora al `PATH` del agente:
+
+```yaml
+- task: UseNode@1
+  displayName: "Use Node.js ${{ parameters.nodeVersion }}"
+  inputs:
+    version: ${{ parameters.nodeVersion }}
+    checkLatest: false
+```
+
+Dejamos `checkLatest` en `false` para evitar consultas y descargas innecesarias
+en cada ejecución. El rango `24.x` permite utilizar una versión compatible
+dentro de esa línea principal. Si el proyecto necesitara reproducibilidad a
+nivel de parche, podría proporcionar una versión más específica.
+
+Después instalamos la versión educativa de pnpm indicada por el consumidor:
+
+```yaml
+- script: npm install --global pnpm@${{ parameters.pnpmVersion }}
+  displayName: "Install pnpm ${{ parameters.pnpmVersion }}"
+```
+
+En una implementación real también podríamos adoptar Corepack o una tarea
+especializada. Aquí utilizamos `npm` porque hace explícito qué herramienta se
+instala y mantiene el ejemplo centrado en las plantillas remotas.
+
+### Instalación reproducible
+
+El modificador `--frozen-lockfile` obliga a que `package.json` y
+`pnpm-lock.yaml` estén sincronizados:
+
+```yaml
+- script: pnpm install --frozen-lockfile
+  displayName: "Install dependencies"
+```
+
+Si el lockfile necesita cambios, el pipeline fallará en vez de generar una
+resolución diferente durante la integración continua. Esto evita builds que
+funcionan con dependencias distintas a las revisadas en el repositorio.
+
+### Insertar pasos de forma condicional
+
+Las verificaciones opcionales utilizan expresiones de plantilla:
+
+```yaml
+- ${{ if eq(parameters.runLint, true) }}:
+    - script: pnpm lint
+      displayName: "Run ESLint"
+```
+
+Azure DevOps evalúa esta expresión antes de comenzar la ejecución. Cuando
+`runLint` es `false`, el paso no forma parte del pipeline expandido; no aparece
+simplemente como una tarea omitida durante el runtime.
+
+Aplicamos el mismo patrón al análisis de TypeScript y al build. Así, la
+plantilla puede reutilizarse en diferentes etapas de adopción sin duplicar su
+lógica principal.
+
+La sintaxis y el comportamiento de las inserciones condicionales pueden
+consultarse en la
+[documentación oficial de plantillas YAML](https://learn.microsoft.com/azure/devops/pipelines/process/templates?view=azure-devops),
+y `UseNode@1` está descrita en la
+[referencia de tareas de Azure Pipelines](https://learn.microsoft.com/azure/devops/pipelines/tasks/reference/use-node-v1?view=azure-pipelines).
+
+Con los dos archivos ya definidos, el siguiente paso será revisar la
+autorización entre repositorios, los errores más frecuentes y qué partes del
+ejemplo cambiarían en una organización real.
+
+## Autorizar el acceso al repositorio remoto
+
+Declarar un repositorio en YAML no concede acceso automáticamente. Azure
+DevOps evalúa la identidad con la que se ejecuta el job y las políticas de
+seguridad configuradas para los repositorios.
+
+Durante la primera ejecución podemos encontrar un mensaje indicando que el
+recurso no existe o no está autorizado. Si tenemos permisos suficientes, Azure
+DevOps permite autorizarlo desde la ejecución fallida y volver a iniciar el
+pipeline.
+
+Cuando el repositorio de plantillas pertenece a otro proyecto de la misma
+organización, debemos revisar los permisos del repositorio remoto:
+
+1. Abrir **Project settings** en el proyecto que contiene las plantillas.
+2. Entrar en **Repositories** y seleccionar
+   `azure-pipeline-templates`.
+3. Localizar la identidad de compilación del proyecto consumidor.
+4. Conceder únicamente el permiso **Read** necesario para obtener las
+   plantillas.
+
+La identidad puede aparecer con un nombre parecido a:
+
+```text
+WebsiteProject Build Service (KenriDevOrganization)
+```
+
+El nombre exacto dependerá del proyecto y de la organización. No debemos
+conceder permisos de escritura, creación de ramas o administración para un
+pipeline que solo necesita leer una plantilla.
+
+Si los repositorios están en organizaciones diferentes, la referencia necesita
+una service connection de Azure Repos/TFS y la propiedad `endpoint`:
+
+```yaml
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: SharedPipelines/azure-pipeline-templates
+      endpoint: remote-azure-repos
+      ref: refs/tags/v1.0.0
+```
+
+Este bloque sigue siendo ilustrativo. La service connection y sus credenciales
+se configurarían desde Azure DevOps, nunca dentro del archivo YAML.
+
+La documentación de
+[acceso seguro a repositorios](https://learn.microsoft.com/azure/devops/pipelines/security/secure-access-to-repos?view=azure-devops)
+describe el alcance de autorización del job y la protección de repositorios
+referenciados desde pipelines YAML.
+
+## Recomendaciones de seguridad
+
+Centralizar plantillas facilita el mantenimiento, pero también convierte el
+repositorio compartido en una dependencia de varios proyectos. Un cambio allí
+puede modificar los comandos ejecutados por todos los consumidores que adopten
+esa versión.
+
+Conviene aplicar estas medidas:
+
+- Proteger la rama principal del repositorio de plantillas.
+- Exigir revisión mediante pull request para modificar YAML compartido.
+- Conceder al pipeline consumidor acceso de solo lectura.
+- Limitar el alcance del token de trabajo al proyecto cuando sea posible.
+- Activar la protección de acceso a repositorios desde pipelines YAML.
+- Fijar una versión conocida mediante tag o SHA.
+- Revisar una actualización antes de cambiar el `ref` del consumidor.
+- Mantener secretos fuera de los parámetros de plantilla.
+
+Los parámetros son apropiados para versiones, interruptores y nombres de
+configuración no sensibles. Las contraseñas, tokens y claves deben almacenarse
+como secretos de Azure DevOps, por ejemplo mediante variables secretas, grupos
+de variables protegidos o una integración con un almacén de secretos.
+
+Un tag ofrece una interfaz legible como `v1.0.0`, pero una organización debe
+proteger también la creación y modificación de tags. Cuando necesitemos una
+referencia inmutable, fijar el SHA completo del commit proporciona una garantía
+más estricta.
+
+## Errores frecuentes
+
+### El repositorio no existe o no está autorizado
+
+```text
+The repository does not exist or has not been authorized for use
+```
+
+Debemos comprobar el formato de `name`, la organización, el proyecto y los
+permisos de la identidad de compilación. Si el recurso aparece pendiente de
+autorización en la ejecución, podemos autorizarlo y volver a ejecutar el
+pipeline.
+
+### No se encuentra la plantilla
+
+```text
+File nextjs/continuous-integration.yml not found
+```
+
+Las causas habituales son una ruta incorrecta, diferencias entre mayúsculas y
+minúsculas o un `ref` que apunta a una versión donde el archivo todavía no
+existe. La ruta siempre se resuelve dentro del repositorio asociado al alias
+que aparece después de `@`.
+
+### La plantilla tiene un nivel incompatible
+
+```text
+Unexpected value 'stages'
+```
+
+Una plantilla que declara `stages:` debe incluirse dentro de la colección
+`stages` del consumidor. De la misma manera, una plantilla de jobs se incluye
+desde `jobs` y una plantilla de steps desde `steps`.
+
+En nuestro caso ambos archivos coinciden:
+
+```yaml
+# Consumidor
+stages:
+  - template: nextjs/continuous-integration.yml@templates
+
+# Plantilla
+stages:
+  - stage: Validate
+```
+
+### El bloque `pr` no inicia validaciones en Azure Repos
+
+Los triggers YAML `pr:` no configuran validaciones de pull request para Azure
+Repos Git. Debemos crear una política **Build validation** sobre la rama de
+destino y asociarla con el pipeline.
+
+### La plantilla hace referencia a un script inexistente
+
+Importar una plantilla no equivale a clonar todo su repositorio como directorio
+de trabajo. Si un step necesita ejecutar un script almacenado junto a la
+plantilla, debemos añadir un checkout explícito del recurso `templates` y usar
+la ruta donde Azure DevOps lo descargue.
+
+Para nuestro ejemplo esto no es necesario: todos los comandos (`pnpm lint`,
+TypeScript y build) trabajan sobre el repositorio `self`.
+
+### La instalación falla por el lockfile
+
+`pnpm install --frozen-lockfile` falla cuando `package.json` y
+`pnpm-lock.yaml` no están sincronizados. Esto es intencional. Debemos regenerar
+el lockfile localmente, revisar el cambio y guardarlo en el repositorio en vez
+de relajar la verificación del pipeline.
+
+## El flujo completo
+
+Después de reunir todas las piezas, una ejecución seguiría esta secuencia:
+
+```text
+1. Un cambio llega a main o development.
+2. Azure DevOps lee azure-pipelines.yml desde website.
+3. Resuelve el recurso templates usando el tag v1.0.0.
+4. Obtiene y expande continuous-integration.yml.
+5. Valida los parámetros enviados por el consumidor.
+6. Construye el plan final con los pasos habilitados.
+7. El agente obtiene el repositorio website mediante checkout: self.
+8. Prepara Node.js y pnpm.
+9. Instala, valida y compila la aplicación.
+```
+
+La plantilla remota centraliza la implementación, mientras que el repositorio
+del website conserva el control sobre sus triggers, su versión de plantilla y
+los parámetros que decide utilizar.
+
+## ¿Cuándo utilizar este patrón?
+
+Resulta útil cuando varios repositorios comparten una política de integración
+continua y queremos corregir o evolucionar esa política desde un lugar central.
+También ayuda a mantener pequeños los archivos consumidores y a crear una
+experiencia coherente entre equipos.
+
+Puede ser innecesario cuando existe un único proyecto, el pipeline contiene
+muy pocos pasos o las aplicaciones necesitan procesos completamente
+diferentes. Centralizar por sí mismo no aporta valor si la plantilla termina
+llena de excepciones y condiciones específicas para cada consumidor.
+
+## Conclusiones
+
+En este ejemplo separamos el **cuándo** y el **qué** del **cómo**:
+
+- `website/azure-pipelines.yml` define los triggers, la versión remota y los
+  parámetros.
+- `azure-pipeline-templates/nextjs/continuous-integration.yml` implementa los
+  stages, jobs y steps compartidos.
+
+Azure DevOps no inicia otro pipeline: obtiene una plantilla versionada, la
+expande y ejecuta el resultado sobre el repositorio consumidor. Para que el
+patrón sea seguro necesitamos permisos mínimos, referencias controladas y un
+proceso de revisión para el repositorio central.
+
+En la segunda parte reproduciremos el mismo caso de uso con GitHub Actions.
+Sustituiremos `resources.repositories` y las plantillas de Azure DevOps por un
+workflow reutilizable declarado con `workflow_call`, manteniendo el website
+como repositorio consumidor.

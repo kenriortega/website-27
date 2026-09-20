@@ -28,6 +28,10 @@ const articleLoaders = {
     import("@/content/articles/kafka-serie-part-1.mdx"),
   "kafka-serie-part-2": () =>
     import("@/content/articles/kafka-serie-part-2.mdx"),
+  "azure-devops-plantillas-pipelines-repositorios-remotos": () =>
+    import(
+      "@/content/articles/azure-devops-plantillas-pipelines-repositorios-remotos.mdx"
+    ),
 } as const;
 
 type ArticleSlug = keyof typeof articleLoaders;
