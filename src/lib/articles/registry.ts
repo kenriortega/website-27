@@ -32,6 +32,10 @@ const articleLoaders = {
     import(
       "@/content/articles/azure-devops-plantillas-pipelines-repositorios-remotos.mdx"
     ),
+  "github-actions-workflows-reutilizables-repositorios-remotos": () =>
+    import(
+      "@/content/articles/github-actions-workflows-reutilizables-repositorios-remotos.mdx"
+    ),
 } as const;
 
 type ArticleSlug = keyof typeof articleLoaders;

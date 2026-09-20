@@ -1,0 +1,644 @@
+export const metadata = {
+  title: "Cómo reutilizar workflows remotos con GitHub Actions",
+  description:
+    "Aprende a consumir un workflow reutilizable alojado en otro repositorio de GitHub mediante un ejemplo educativo para una aplicación Next.js.",
+  publishedAt: "2026-09-20",
+  tags: ["GitHub Actions", "CI/CD", "YAML", "Next.js", "DevOps"],
+  level: "intermedio",
+  language: "es",
+  draft: false,
+  featured: false,
+  series: {
+    slug: "pipelines-reutilizables-remotos",
+    title: "Pipelines reutilizables desde repositorios remotos",
+    order: 2,
+  },
+};
+
+En la primera parte de esta serie construimos un ejemplo con Azure DevOps:
+un repositorio consumidor conservaba sus triggers y enviaba parámetros a una
+plantilla YAML almacenada en otro repositorio.
+
+Ahora reproduciremos la misma idea con GitHub Actions. El repositorio del
+website tendrá un workflow pequeño y el proceso compartido de integración
+continua vivirá en un repositorio remoto mediante un **reusable workflow**.
+
+El objetivo sigue siendo educativo. No configuraremos GitHub Actions en este
+website ni realizaremos un despliegue. Los archivos servirán para comprender el
+contrato entre ambos repositorios, los permisos necesarios y las decisiones de
+seguridad antes de utilizar el patrón en un proyecto real.
+
+## El mismo problema, otra plataforma
+
+Imaginemos nuevamente varios proyectos Next.js que deben ejecutar las mismas
+validaciones:
+
+1. Preparar Node.js y pnpm.
+2. Instalar las dependencias con el lockfile.
+3. Ejecutar ESLint.
+4. Comprobar los tipos de TypeScript.
+5. Generar el build de producción.
+
+Copiar todos esos pasos en cada repositorio crea múltiples versiones de la
+misma automatización. Para evitarlo separaremos las responsabilidades:
+
+- El repositorio consumidor decide **cuándo** ejecutar el workflow, qué versión
+  remota utilizar y cuáles verificaciones necesita.
+- El repositorio compartido define **cómo** preparar, validar y compilar una
+  aplicación Next.js.
+
+GitHub denomina a esta segunda pieza un **reusable workflow**. No debemos
+confundirlo con una acción compuesta: un workflow reutilizable puede contener
+uno o varios jobs completos, mientras que una acción compuesta agrupa steps y
+se utiliza dentro de un job.
+
+## ¿Se ejecuta otro workflow?
+
+El archivo consumidor llama al workflow reutilizable como un job. GitHub
+Actions incorpora los jobs definidos por el workflow remoto dentro de la
+ejecución iniciada por el consumidor y muestra la relación entre ambos.
+
+La llamada no se escribe dentro de `steps`. Se declara directamente con
+`jobs.<job_id>.uses`, porque estamos reutilizando un workflow completo y no una
+acción individual.
+
+Puedes consultar la sintaxis y sus restricciones en la
+[documentación oficial sobre workflows reutilizables](https://docs.github.com/actions/how-tos/reuse-automations/reuse-workflows).
+
+## Arquitectura del ejemplo
+
+Trabajaremos conceptualmente con dos repositorios:
+
+```text
+website
+└── .github
+    └── workflows
+        └── continuous-integration.yml
+
+github-workflow-templates
+└── .github
+    └── workflows
+        └── nextjs-continuous-integration.yml
+```
+
+En GitHub, un workflow reutilizable debe estar directamente dentro de
+`.github/workflows`. No podemos guardarlo en una subcarpeta como
+`.github/workflows/nextjs/`.
+
+El flujo será el siguiente:
+
+```text
+Pull request o cambio en el website
+                 │
+                 ▼
+ .github/workflows/continuous-integration.yml
+                 │
+                 │ llama un reusable workflow
+                 ▼
+ github-workflow-templates
+                 │
+                 │ aporta jobs y steps compartidos
+                 ▼
+       Validaciones sobre website
+       ├── instalación
+       ├── lint
+       ├── TypeScript
+       └── build
+```
+
+## Alcance de la demostración
+
+Los fragmentos serán ejemplos independientes:
+
+- No se guardarán en `.github/workflows` dentro de este proyecto.
+- No crearán ejecuciones reales en GitHub Actions.
+- No utilizarán organizaciones, repositorios o secretos reales.
+- No publicarán artefactos ni desplegarán el website.
+- No concederán permisos de escritura al token del workflow.
+
+Construiremos primero el archivo consumidor y luego el workflow reutilizable.
+
+## El workflow consumidor
+
+El repositorio `website` mantendrá un archivo de entrada con sus eventos y una
+llamada al repositorio compartido:
+
+```yaml
+# Repositorio: website
+# Archivo: .github/workflows/continuous-integration.yml
+
+name: Continuous integration
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@v1.0.0
+    with:
+      node-version: "24.x"
+      pnpm-version: "10.13.1"
+      run-lint: true
+      run-type-check: true
+      run-build: true
+```
+
+Este archivo conserva las decisiones particulares del website, pero no repite
+los steps de instalación, lint, tipos y build.
+
+### Los eventos pertenecen al consumidor
+
+Los bloques `push` y `pull_request` permanecen en el repositorio que inicia la
+ejecución:
+
+```yaml
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+```
+
+El workflow reutilizable no necesita repetir esos eventos. En su lugar,
+declara `workflow_call` para indicar que otro workflow puede invocarlo.
+
+Esta separación permite que cada proyecto decida sus ramas y políticas sin
+duplicar la implementación técnica de las validaciones.
+
+### La llamada se realiza como un job
+
+La propiedad `uses` aparece directamente dentro del job `validate`:
+
+```yaml
+jobs:
+  validate:
+    uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@v1.0.0
+```
+
+La referencia tiene cuatro partes:
+
+- `example-org` representa al propietario u organización.
+- `github-workflow-templates` es el repositorio compartido.
+- `.github/workflows/nextjs-continuous-integration.yml` es la ruta obligatoria
+  al archivo.
+- `v1.0.0` identifica la versión que utilizará el consumidor.
+
+Un job que llama a un workflow reutilizable admite un conjunto limitado de
+propiedades, como `uses`, `with`, `secrets`, `permissions`, `needs`, `if` y
+`strategy`. No podemos añadirle `runs-on` ni `steps`; esos detalles pertenecen
+al workflow llamado.
+
+### Fijar una versión remota
+
+GitHub permite referenciar una rama, un tag o el SHA completo de un commit:
+
+```yaml
+# Tag legible y versionado
+uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@v1.0.0
+
+# SHA inmutable para máxima reproducibilidad
+uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@0123456789abcdef0123456789abcdef01234567
+```
+
+Una rama como `@main` recibe cambios automáticamente, pero también puede
+modificar el comportamiento de todos los consumidores sin que estos cambien
+su código. Un tag ofrece una actualización intencional; un SHA completo es la
+opción más estable y segura frente a modificaciones de una referencia.
+
+Para facilitar la lectura utilizaremos `@v1.0.0` en el resto del artículo. En
+un entorno de producción valoraríamos fijar un SHA y automatizar su
+actualización mediante una herramienta de dependencias.
+
+### Enviar inputs al workflow remoto
+
+El bloque `with` establece el contrato entre el consumidor y el workflow
+reutilizable:
+
+```yaml
+with:
+  node-version: "24.x"
+  pnpm-version: "10.13.1"
+  run-lint: true
+  run-type-check: true
+  run-build: true
+```
+
+Los nombres y tipos deben coincidir con los inputs declarados por el workflow
+remoto. En GitHub Actions los inputs pueden ser `string`, `boolean` o `number`.
+
+El consumidor controla cuáles verificaciones activa, mientras el repositorio
+central mantiene su implementación.
+
+## El workflow reutilizable
+
+Ahora cambiamos al repositorio `github-workflow-templates`. Crearemos el
+archivo `.github/workflows/nextjs-continuous-integration.yml`:
+
+```yaml
+# Repositorio: github-workflow-templates
+# Archivo: .github/workflows/nextjs-continuous-integration.yml
+
+name: Next.js continuous integration
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: "Node.js version used by the project"
+        required: false
+        type: string
+        default: "24.x"
+      pnpm-version:
+        description: "pnpm version used by the project"
+        required: false
+        type: string
+        default: "10.13.1"
+      run-lint:
+        description: "Run ESLint"
+        required: false
+        type: boolean
+        default: true
+      run-type-check:
+        description: "Run the TypeScript compiler"
+        required: false
+        type: boolean
+        default: true
+      run-build:
+        description: "Create the production build"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Install, validate and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out consumer repository
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        if: ${{ inputs.run-lint }}
+        run: pnpm lint
+
+      - name: Check TypeScript
+        if: ${{ inputs.run-type-check }}
+        run: pnpm exec tsc --noEmit --incremental false
+
+      - name: Build Next.js application
+        if: ${{ inputs.run-build }}
+        run: pnpm build
+```
+
+La clave que convierte este archivo en reutilizable es `on.workflow_call`.
+Sin ella, otro workflow no puede invocarlo mediante `jobs.<job_id>.uses`.
+
+### Declarar un contrato tipado
+
+Cada input tiene nombre, tipo y valor predeterminado:
+
+```yaml
+on:
+  workflow_call:
+    inputs:
+      run-build:
+        description: "Create the production build"
+        required: false
+        type: boolean
+        default: true
+```
+
+El valor se consulta mediante el contexto `inputs`:
+
+```yaml
+- name: Build Next.js application
+  if: ${{ inputs.run-build }}
+  run: pnpm build
+```
+
+Esta condición se evalúa como un booleano. No necesitamos comparar con el texto
+`"true"`, porque el contrato ya define el tipo.
+
+### ¿Qué repositorio obtiene checkout?
+
+Aunque `actions/checkout` aparece dentro del archivo remoto, obtiene el
+repositorio que inició la ejecución: `website`.
+
+```yaml
+- name: Check out consumer repository
+  uses: actions/checkout@v5
+```
+
+Por eso los comandos posteriores encuentran el `package.json`, el
+`pnpm-lock.yaml` y el código del website. El repositorio que contiene el
+workflow reutilizable no se convierte automáticamente en el directorio de
+trabajo.
+
+Si el workflow necesitara un script guardado en `github-workflow-templates`,
+tendríamos que hacer un segundo checkout de ese repositorio y elegir otra ruta.
+Para este ejemplo no es necesario: todos los comandos trabajan sobre el
+consumidor.
+
+### Preparar pnpm antes de activar su caché
+
+El ejemplo configura pnpm antes de ejecutar `actions/setup-node` con
+`cache: "pnpm"`:
+
+```yaml
+- name: Set up pnpm
+  uses: pnpm/action-setup@v4
+  with:
+    version: ${{ inputs.pnpm-version }}
+
+- name: Set up Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: ${{ inputs.node-version }}
+    cache: "pnpm"
+```
+
+`actions/setup-node` prepara Node.js y administra la caché del gestor de
+paquetes, pero no instala pnpm por sí mismo. La acción anterior deja disponible
+el ejecutable y respeta la versión acordada con el consumidor.
+
+La caché acelera la descarga de paquetes; no sustituye la instalación de
+dependencias. Por eso conservamos este step:
+
+```yaml
+- name: Install dependencies
+  run: pnpm install --frozen-lockfile
+```
+
+`--frozen-lockfile` evita que la automatización modifique el lockfile y hace
+visible cualquier desincronización con `package.json`.
+
+## Permisos entre repositorios
+
+Que la referencia YAML sea correcta no garantiza que GitHub pueda leer el
+workflow remoto. La visibilidad y la configuración de Actions determinan si el
+consumidor tiene acceso.
+
+Un workflow público puede ser utilizado por repositorios autorizados por sus
+políticas de Actions. Para compartir un workflow desde un repositorio privado,
+el repositorio remoto debe habilitar el acceso desde los repositorios privados
+permitidos del mismo propietario u organización.
+
+En GitHub esta opción se configura en el repositorio que contiene el workflow:
+**Settings → Actions → General → Access**.
+
+Además, las políticas del repositorio consumidor o de la organización deben
+permitir la acción y el workflow referenciados. La
+[documentación sobre acceso a workflows privados](https://docs.github.com/actions/how-tos/reuse-automations/share-across-private-repositories)
+explica el alcance y las advertencias de esta configuración.
+
+## Permisos mínimos para el token
+
+Declaramos permisos de solo lectura en el consumidor y en el workflow remoto:
+
+```yaml
+permissions:
+  contents: read
+```
+
+Un workflow llamado no puede elevar los permisos concedidos por quien lo
+invoca. En una cadena de workflows reutilizables, los permisos solamente se
+mantienen o se reducen.
+
+Si una futura versión necesitara escribir comentarios en un pull request o
+publicar un paquete, el permiso correspondiente debería añadirse de forma
+explícita y con el menor alcance posible. No conviene conceder permisos de
+escritura por anticipado.
+
+## Inputs no son secretos
+
+Los valores enviados con `with` son configuración ordinaria. No debemos usar
+inputs para credenciales, tokens o información sensible.
+
+Cuando un workflow realmente necesita un secreto, debe declararlo en
+`on.workflow_call.secrets`:
+
+```yaml
+on:
+  workflow_call:
+    secrets:
+      registry-token:
+        description: "Token used to publish a package"
+        required: true
+```
+
+El consumidor lo envía de forma explícita:
+
+```yaml
+jobs:
+  publish:
+    uses: example-org/github-workflow-templates/.github/workflows/publish.yml@v1.0.0
+    secrets:
+      registry-token: ${{ secrets.REGISTRY_TOKEN }}
+```
+
+También existe `secrets: inherit` para repositorios de la misma organización o
+empresa. Aunque resulte cómodo, transmite todos los secretos disponibles al
+workflow llamado. Preferimos declarar solamente los necesarios para que el
+contrato sea visible y reduzca el alcance de una filtración o un error.
+
+Los secretos de un environment requieren atención adicional: no se pueden
+declarar y enviar como secretos de `workflow_call` del mismo modo. Si el job
+remoto utiliza un `environment`, se aplican los secretos configurados para ese
+environment.
+
+Nuestro ejemplo de integración continua no necesita secretos, así que no
+incluye ninguno.
+
+## Seguridad de acciones y workflows remotos
+
+Centralizar automatización crea una dependencia entre repositorios. Algunas
+medidas reducen el riesgo:
+
+1. Proteger el repositorio de workflows con revisión obligatoria.
+2. Fijar el workflow remoto a un tag controlado o, preferiblemente, a un SHA.
+3. Fijar también las acciones de terceros a versiones confiables o SHAs.
+4. Declarar permisos mínimos mediante `permissions`.
+5. Evitar `secrets: inherit` cuando bastan secretos explícitos.
+6. Revisar los logs para no imprimir inputs o secretos sensibles.
+7. Publicar cambios incompatibles como una versión mayor nueva.
+
+En los fragmentos utilizamos versiones legibles para facilitar el aprendizaje.
+En una implementación real deberíamos seguir la política de seguridad del
+equipo y automatizar las actualizaciones de referencias inmutables.
+
+## Errores frecuentes
+
+### El workflow no puede encontrarse
+
+```text
+workflow was not found
+```
+
+Debemos comprobar el propietario, el nombre del repositorio, la ruta, la
+referencia y las mayúsculas. El archivo debe vivir directamente en
+`.github/workflows` dentro de la versión indicada.
+
+### El workflow remoto no puede reutilizarse
+
+Si el archivo existe pero no declara `on.workflow_call`, GitHub no puede
+invocarlo como workflow reutilizable:
+
+```yaml
+on:
+  workflow_call:
+```
+
+### La llamada aparece dentro de steps
+
+Esta forma es incorrecta:
+
+```yaml
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@v1.0.0
+```
+
+La llamada debe ocupar el nivel del job:
+
+```yaml
+jobs:
+  validate:
+    uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@v1.0.0
+```
+
+### El tipo de un input no coincide
+
+Si `run-build` está declarado como booleano, debemos enviar `true` o `false`,
+no el texto `"true"`:
+
+```yaml
+with:
+  run-build: true
+```
+
+### El repositorio privado no autoriza al consumidor
+
+La ruta puede ser correcta y aun así fallar por acceso. Debemos habilitar el
+uso compartido en el repositorio remoto y revisar las políticas de Actions del
+repositorio consumidor y de la organización.
+
+### Se intenta añadir steps al job consumidor
+
+El job que utiliza `uses` no admite steps adicionales. Si necesitamos ejecutar
+trabajo antes o después, debemos crear jobs separados y relacionarlos con
+`needs`:
+
+```yaml
+jobs:
+  validate:
+    uses: example-org/github-workflow-templates/.github/workflows/nextjs-continuous-integration.yml@v1.0.0
+
+  summarize:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Validation completed"
+```
+
+### La instalación falla por el lockfile
+
+`pnpm install --frozen-lockfile` falla cuando `package.json` y
+`pnpm-lock.yaml` no coinciden. La solución consiste en actualizar el lockfile
+localmente, revisarlo y guardarlo; no en desactivar la validación del workflow.
+
+## El flujo completo
+
+Una ejecución seguiría esta secuencia:
+
+```text
+1. Un push o pull request activa el workflow del website.
+2. GitHub lee continuous-integration.yml en el repositorio consumidor.
+3. Resuelve el workflow remoto mediante la referencia v1.0.0.
+4. Comprueba el acceso entre ambos repositorios.
+5. Valida los inputs enviados a workflow_call.
+6. Crea el job quality definido por el workflow reutilizable.
+7. actions/checkout obtiene el repositorio website.
+8. Prepara pnpm y Node.js.
+9. Instala, valida y compila la aplicación.
+```
+
+El repositorio central controla la implementación compartida. El website
+conserva sus eventos, la versión que consume, los inputs y el límite máximo de
+permisos.
+
+## Comparación con Azure DevOps
+
+Ambos enfoques resuelven el mismo problema, pero utilizan conceptos distintos:
+
+| Responsabilidad | Azure DevOps | GitHub Actions |
+| --- | --- | --- |
+| Declarar el repositorio remoto | `resources.repositories` | Parte de `jobs.<id>.uses` |
+| Habilitar la reutilización | Plantilla de stages, jobs o steps | `on.workflow_call` |
+| Invocar el contenido | `template: ruta@alias` | `uses: owner/repo/ruta@ref` |
+| Enviar configuración | `parameters` | `with` e `inputs` |
+| Enviar secretos | Variables o grupos autorizados | `secrets` |
+| Fijar una versión | `ref` | Sufijo `@ref` |
+| Código obtenido por defecto | `checkout: self` | `actions/checkout` del consumidor |
+
+La diferencia principal está en la unidad de reutilización. Azure DevOps puede
+importar plantillas de stages, jobs, steps o variables. GitHub Actions invoca
+un workflow reutilizable como un job completo; para compartir solamente una
+secuencia de steps utilizaríamos una acción compuesta.
+
+## ¿Cuándo utilizar este patrón?
+
+Un workflow reutilizable resulta útil cuando varios repositorios comparten una
+política de CI, necesitamos propagar mejoras de forma controlada y queremos
+mantener contratos claros mediante inputs.
+
+Puede ser excesivo para un único repositorio o para automatizaciones muy
+pequeñas. También pierde valor cuando el workflow central acumula condiciones
+específicas para cada aplicación. En ese caso quizá no existe una abstracción
+común real.
+
+## Conclusiones
+
+En esta segunda parte trasladamos el patrón de Azure DevOps a GitHub Actions:
+
+- El website define sus eventos, permisos, versión remota e inputs.
+- El repositorio compartido expone un workflow mediante `workflow_call`.
+- La llamada se realiza directamente desde un job con `uses`.
+- `actions/checkout` obtiene el código del repositorio consumidor.
+- Los permisos solo pueden mantenerse o reducirse.
+- Las referencias inmutables y los secretos explícitos reducen el riesgo.
+
+No hemos creado automatización activa para KenriDev. Construimos dos archivos
+de ejemplo que permiten comparar las plataformas y decidir cómo organizar una
+biblioteca de pipelines reutilizables antes de aplicarla a un entorno real.
