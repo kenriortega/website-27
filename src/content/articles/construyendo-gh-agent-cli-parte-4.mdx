@@ -1,0 +1,423 @@
+export const metadata = {
+  title: "Construyendo gh-agent-cli con Go: prepararlo para agentes de IA",
+  description:
+    "Diseñamos la evolución del CLI hacia herramientas seguras para agentes de IA, separando contratos, presentación, permisos y confirmación humana.",
+  publishedAt: "2026-09-30",
+  tags: ["Go", "GitHub API", "Agentes de IA", "Tool calling", "Seguridad"],
+  level: "intermedio",
+  language: "es",
+  draft: false,
+  featured: false,
+  series: {
+    slug: "construyendo-gh-agent-cli",
+    title: "Construyendo gh-agent-cli con Go",
+    order: 4,
+  },
+  repositoryUrl: "https://github.com/kenriortega/gh-agent-cli",
+};
+
+Durante las tres primeras entregas construimos una base funcional para
+`gh-agent-cli`. El programa valida referencias de repositorios, consulta issues
+y commits, limita resultados y filtra actividad por períodos de tiempo.
+
+El proyecto nació con una intención adicional: servir como campo de aprendizaje
+para construir herramientas utilizadas por agentes de IA. En esta última parte
+no presentaremos como terminada una integración que todavía no existe. En su
+lugar, diseñaremos el siguiente hito y estableceremos qué debe cambiar antes de
+conectar un modelo.
+
+La pregunta ya no es solamente “¿cómo llamamos a GitHub?”. Ahora debemos
+responder:
+
+- ¿Qué contrato recibirá el agente?
+- ¿Qué datos devolverá cada herramienta?
+- ¿Qué operaciones son seguras sin confirmación?
+- ¿Dónde colocaremos las políticas y los permisos?
+- ¿Cómo probaremos el sistema sin depender de un modelo de lenguaje?
+
+## El estado real del proyecto
+
+Antes de diseñar el siguiente paso, conviene separar lo construido de lo
+pendiente:
+
+| Capacidad | Estado |
+| --- | --- |
+| Validar `owner/name` | Implementada |
+| Listar issues abiertos | Implementada |
+| Listar commits | Implementada |
+| Limitar resultados | Implementada |
+| Filtrar commits por fechas | Implementada |
+| Autenticación opcional | Implementada |
+| Salida JSON | Pendiente |
+| Contratos de herramientas para un agente | Pendiente |
+| Integración con un framework de agentes | Pendiente |
+| Crear o modificar recursos de GitHub | Fuera del alcance actual |
+
+Esta distinción evita que el diseño se confunda con una funcionalidad lista
+para producción.
+
+## Un agente necesita herramientas deterministas
+
+Un modelo puede decidir que necesita conocer los issues recientes, pero no
+debería construir manualmente URLs, manejar cursores o interpretar todos los
+campos de la API. La herramienta debe encapsular esas decisiones.
+
+Conceptualmente queremos llegar a una interacción como esta:
+
+```text
+Usuario
+  │
+  │ "Resume los issues recientes de golang/go"
+  ▼
+Agente
+  │
+  │ selecciona list_open_issues
+  ▼
+Herramienta Go
+  │
+  │ valida, limita y consulta GitHub
+  ▼
+Resultado estructurado
+  │
+  ▼
+Agente redacta el resumen
+```
+
+El agente decide **cuándo** utilizar la herramienta. El código Go conserva la
+responsabilidad de decidir **cómo** llamar a GitHub de forma segura.
+
+## No utilizar la salida de terminal como contrato
+
+La salida actual está diseñada para una persona:
+
+```text
+#81795 crypto/mldsa: GenerateKey and NewPrivateKey allocate the private key twice
+https://github.com/golang/go/issues/81795
+```
+
+Un agente podría intentar analizar ese texto, pero el contrato sería frágil.
+Un cambio visual podría romper la interpretación.
+
+El siguiente hito debería incorporar un formato estructurado:
+
+```json
+{
+  "repository": {
+    "owner": "golang",
+    "name": "go"
+  },
+  "issues": [
+    {
+      "number": 81795,
+      "title": "crypto/mldsa: GenerateKey and NewPrivateKey allocate the private key twice",
+      "url": "https://github.com/golang/go/issues/81795"
+    }
+  ]
+}
+```
+
+La salida humana y la salida para máquinas pueden coexistir:
+
+```bash
+# Presentación para una persona
+go run . -repo golang/go -resource issues -limit 10
+
+# Contrato estructurado propuesto
+go run . -repo golang/go -resource issues -limit 10 -output json
+```
+
+`-output json` es una propuesta para el siguiente hito; todavía no forma parte
+del CLI descrito en esta serie.
+
+## Separar consulta y presentación
+
+Actualmente `listIssues` obtiene los datos y los escribe en un `io.Writer`. Para
+incorporar múltiples formatos convendrá separar dos responsabilidades:
+
+```text
+GitHub API
+    │
+    ▼
+Servicio de aplicación
+    │ devuelve modelos
+    ├──────────────► Presentador de terminal
+    │
+    └──────────────► Codificador JSON
+```
+
+Una forma posible sería introducir un servicio:
+
+```go
+type RepositoryService struct {
+	reader RepositoryReader
+}
+
+func (service *RepositoryService) OpenIssues(
+	ctx context.Context,
+	ref repository.Ref,
+	limit int,
+) ([]githubapi.Issue, error) {
+	return service.reader.ListOpenIssues(
+		ctx,
+		ref,
+		githubapi.IssueListOptions{
+			Limit: limit,
+		},
+	)
+}
+```
+
+El fragmento es un diseño propuesto, no código ya incorporado. Su objetivo es
+que la herramienta del agente y el CLI reutilicen el mismo caso de uso sin
+depender del formato de salida.
+
+## Diseñar herramientas pequeñas
+
+En lugar de exponer una herramienta genérica como `github`, conviene definir
+operaciones específicas:
+
+```text
+list_open_issues
+list_commits
+```
+
+Cada herramienta debe tener un esquema reducido y comprensible. Por ejemplo,
+`list_open_issues` podría recibir:
+
+```json
+{
+  "owner": "golang",
+  "repository": "go",
+  "limit": 10
+}
+```
+
+Y `list_commits`:
+
+```json
+{
+  "owner": "golang",
+  "repository": "go",
+  "limit": 10,
+  "since": "2026-09-01",
+  "until": "2026-09-30"
+}
+```
+
+Los filtros absolutos y relativos no deberían enviarse simultáneamente. La
+validación que ya construimos para el CLI debe reutilizarse en la capa de
+aplicación, no duplicarse dentro del adaptador del agente.
+
+## Herramientas de lectura y de escritura
+
+No todas las operaciones tienen el mismo riesgo. Podemos clasificarlas:
+
+| Nivel | Ejemplos | Política inicial |
+| --- | --- | --- |
+| Lectura | Listar issues, commits o pull requests | Permitida con límites |
+| Preparación | Redactar un comentario o proponer etiquetas | No modifica GitHub |
+| Escritura reversible | Crear un comentario o una etiqueta | Requiere confirmación |
+| Escritura sensible | Cerrar un issue, modificar una rama | Confirmación reforzada |
+
+El primer agente debe operar solamente con herramientas de lectura. Cuando
+incorporemos escrituras, el modelo puede preparar una acción, pero la aplicación
+debe solicitar una aprobación humana explícita antes de ejecutarla.
+
+La confirmación no debe depender de que el modelo “recuerde” preguntar. Debe
+formar parte de la arquitectura que invoca las herramientas.
+
+## Un flujo seguro para acciones futuras
+
+Una operación mutable podría seguir este flujo:
+
+```text
+Agente propone la acción
+          │
+          ▼
+Aplicación valida parámetros y permisos
+          │
+          ▼
+Usuario revisa el cambio exacto
+          │
+          ├── rechaza ──► no ocurre ninguna llamada
+          │
+          └── aprueba
+                  │
+                  ▼
+          Cliente ejecuta la acción
+                  │
+                  ▼
+             Resultado auditable
+```
+
+El diseño debe conservar el repositorio, el número de issue, el contenido que
+se enviará y la identidad utilizada. Una confirmación genérica como “¿quieres
+continuar?” no ofrece suficiente contexto.
+
+## Límites también para el contexto del agente
+
+El problema de los miles de issues en `golang/go` no era únicamente técnico.
+Aunque GitHub permitiera descargarlos todos, enviarlos al modelo produciría un
+contexto costoso y difícil de utilizar.
+
+Los límites actuales cumplen dos funciones:
+
+1. Reducen solicitudes y tiempo de respuesta.
+2. Controlan la cantidad de información entregada al agente.
+
+Una herramienta debería conservar un límite predeterminado y un máximo
+permitido. El agente no debería poder solicitar un conjunto ilimitado con un
+valor accidental.
+
+Cuando necesitemos explorar más resultados, será preferible paginar de forma
+intencional o resumir por grupos.
+
+## Contexto, cancelación y timeout
+
+Los métodos del cliente ya reciben `context.Context`. La capa del agente debe
+propagar el contexto de cada ejecución:
+
+```go
+issues, err := service.OpenIssues(
+	ctx,
+	repository.Ref{
+		Owner: "golang",
+		Name:  "go",
+	},
+	10,
+)
+```
+
+Si el usuario cancela una tarea o el agente abandona un plan, la solicitud no
+debería continuar en segundo plano.
+
+El timeout HTTP de quince segundos protege cada petición. En una integración
+completa también podremos establecer un límite para toda la operación del
+agente.
+
+## Errores útiles para código y personas
+
+Actualmente envolvemos los errores con la operación y el repositorio:
+
+```text
+list open issues for golang/go: ...
+```
+
+Para herramientas será útil añadir categorías sin perder la causa:
+
+- Entrada inválida.
+- Autenticación ausente o insuficiente.
+- Límite de solicitudes alcanzado.
+- Repositorio no encontrado.
+- Respuesta temporal de GitHub.
+- Operación cancelada.
+
+El agente podría decidir reintentar únicamente errores temporales. No debería
+reintentar indefinidamente una referencia inválida o una operación sin permiso.
+
+## Autenticación con privilegios mínimos
+
+`GITHUB_TOKEN` es opcional para repositorios públicos. En una herramienta de
+agente debemos aplicar el principio de menor privilegio:
+
+- Un agente de lectura utiliza un token con permisos de lectura.
+- Las operaciones privadas solo reciben los permisos necesarios.
+- Una futura herramienta de escritura utiliza credenciales separadas cuando
+  sea posible.
+- Los tokens nunca forman parte de prompts, logs ni resultados.
+
+La presencia de un token no debe ampliar automáticamente las operaciones que el
+agente puede seleccionar.
+
+## Probar sin depender del modelo
+
+La mayor parte de la lógica debe seguir siendo comprobable sin iniciar un
+agente:
+
+```text
+Pruebas del dominio
+  ├── referencias
+  ├── fechas
+  └── límites
+
+Pruebas del cliente
+  ├── rutas HTTP
+  ├── transformación
+  ├── paginación
+  └── errores
+
+Pruebas de herramientas
+  ├── esquema de entrada
+  ├── llamada al servicio
+  └── resultado estructurado
+
+Evaluaciones del agente
+  ├── selección de herramienta
+  ├── interpretación del resultado
+  └── respeto de confirmaciones
+```
+
+Las pruebas deterministas protegen la herramienta. Las evaluaciones comprueban
+el comportamiento probabilístico del agente. No debemos reemplazar unas por
+otras.
+
+## Integración futura con un framework de agentes
+
+El proyecto comenzó mientras explorábamos
+[Microsoft Agent Framework para Go](https://learn.microsoft.com/agent-framework/overview/?pivots=programming-language-go).
+Antes de adoptar un framework, queremos que los casos de uso funcionen como Go
+convencional y tengan contratos independientes.
+
+El adaptador del framework debería ser una capa delgada:
+
+```text
+Framework de agentes
+        │
+        ▼
+Adaptador de tool calling
+        │
+        ▼
+Servicio de aplicación
+        │
+        ▼
+Cliente de GitHub
+```
+
+Si cambiamos de framework, el servicio, las validaciones y las pruebas del
+cliente deben continuar siendo útiles.
+
+## Próximos hitos de implementación
+
+La ruta propuesta después de esta serie es:
+
+1. Añadir `-output text|json` sin cambiar los modelos actuales.
+2. Extraer casos de uso independientes de la presentación de terminal.
+3. Definir esquemas para `list_open_issues` y `list_commits`.
+4. Crear un adaptador de herramientas con respuestas estructuradas.
+5. Conectar un agente que utilice solamente operaciones de lectura.
+6. Añadir trazas y evaluaciones para observar sus decisiones.
+7. Diseñar confirmación humana antes de cualquier operación mutable.
+
+Cada paso debe terminar con una capacidad pequeña que podamos ejecutar y
+probar sin depender del siguiente.
+
+## Qué nos deja la serie
+
+`gh-agent-cli` todavía no es un agente, y esa es una decisión consciente.
+Primero construimos una herramienta con propiedades que un agente necesita:
+
+- Entradas validadas.
+- Operaciones acotadas.
+- Modelos propios.
+- Dependencias sustituibles.
+- Errores con contexto.
+- Cancelación y timeout.
+- Pruebas deterministas.
+- Acceso de solo lectura.
+
+Con esta base podemos explorar tool calling sin entregar a un modelo acceso
+directo e ilimitado a GitHub.
+
+La siguiente etapa del proyecto comenzará por la salida JSON. Será el puente
+entre una experiencia pensada para la terminal y un contrato estable para
+otras aplicaciones y agentes.

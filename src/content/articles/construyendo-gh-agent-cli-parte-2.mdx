@@ -1,0 +1,505 @@
+export const metadata = {
+  title: "Construyendo gh-agent-cli con Go: consultar issues con GitHub API",
+  description:
+    "Conectamos nuestro CLI con GitHub, diseñamos un cliente de solo lectura y resolvemos límites, pull requests y paginación por cursor.",
+  publishedAt: "2026-09-28",
+  tags: ["Go", "GitHub API", "CLI", "Testing", "HTTP"],
+  level: "intermedio",
+  language: "es",
+  draft: false,
+  featured: false,
+  series: {
+    slug: "construyendo-gh-agent-cli",
+    title: "Construyendo gh-agent-cli con Go",
+    order: 2,
+  },
+  repositoryUrl: "https://github.com/kenriortega/gh-agent-cli",
+};
+
+En la primera parte construimos la base de `gh-agent-cli`: inicializamos el
+módulo, representamos una referencia `owner/name`, validamos la entrada y
+separamos la lógica de `main` para poder probarla sin iniciar otro proceso.
+
+Ahora daremos el primer paso fuera de nuestro programa. Conectaremos el CLI con
+la API de GitHub para consultar issues abiertos de un repositorio.
+
+El objetivo no será solamente obtener datos. Queremos que la integración tenga
+límites claros, que pueda sustituirse durante las pruebas y que se comporte de
+forma segura incluso en un repositorio tan grande como `golang/go`.
+
+## Alcance de esta entrega
+
+Al terminar podremos ejecutar:
+
+```bash
+go run . \
+  -repo golang/go \
+  -resource issues \
+  -limit 10
+```
+
+El programa deberá:
+
+1. Consultar los issues abiertos.
+2. Excluir los pull requests que devuelve el mismo endpoint.
+3. Ordenar por actividad reciente.
+4. Mostrar como máximo diez resultados.
+5. Detener la paginación al alcanzar el límite.
+6. Propagar errores con suficiente contexto.
+
+Seguimos trabajando con operaciones de solo lectura. Esta entrega no crea,
+edita ni cierra issues.
+
+## Incorporar el cliente de GitHub
+
+Utilizaremos [`go-github`](https://github.com/google/go-github), un cliente Go
+para la API de GitHub:
+
+```bash
+go get github.com/google/go-github/v89/github
+```
+
+La dependencia se ocupará de construir las solicitudes, decodificar las
+respuestas y leer la información de paginación. Nuestra aplicación conservará
+la responsabilidad de decidir qué datos necesita y cómo los representa.
+
+## No exponer directamente los tipos de la dependencia
+
+Podríamos devolver `*github.Issue` desde todas las capas, pero eso acoplaría el
+CLI completo con una respuesta externa mucho más grande de lo necesario.
+
+Definimos un modelo propio:
+
+```go
+package githubapi
+
+type Issue struct {
+	Number int
+	Title  string
+	URL    string
+}
+```
+
+Para la primera operación solo necesitamos el número, el título y el enlace.
+Si GitHub cambia otros campos, el resto de la aplicación no se verá afectado.
+
+También agrupamos las opciones de consulta:
+
+```go
+type IssueListOptions struct {
+	Limit int
+}
+```
+
+Aunque hoy contiene una sola propiedad, este tipo evita hacer crecer la firma
+del método cada vez que incorporemos un filtro.
+
+## Encapsular el SDK
+
+El paquete `internal/githubapi` recibe el cliente externo mediante su
+constructor:
+
+```go
+type Client struct {
+	github *github.Client
+}
+
+func New(githubClient *github.Client) *Client {
+	return &Client{
+		github: githubClient,
+	}
+}
+```
+
+No creamos el cliente HTTP dentro de `ListOpenIssues`. Esto permite configurar
+autenticación y timeout desde el punto de entrada de la aplicación. También
+podemos entregar un cliente dirigido a un servidor HTTP de prueba.
+
+## Consultar issues abiertos
+
+El contrato del método utiliza tipos de nuestro dominio:
+
+```go
+func (client *Client) ListOpenIssues(
+	ctx context.Context,
+	ref repository.Ref,
+	options IssueListOptions,
+) ([]Issue, error)
+```
+
+El `context.Context` permite propagar cancelación y límites de tiempo. `Ref`
+garantiza que propietario y repositorio ya fueron validados. `IssueListOptions`
+establece cuántos resultados queremos reunir.
+
+Las opciones enviadas a GitHub son:
+
+```go
+requestOptions := &github.IssueListByRepoOptions{
+	State:     "open",
+	Sort:      "updated",
+	Direction: "desc",
+	ListCursorOptions: github.ListCursorOptions{
+		PerPage: 100,
+	},
+}
+```
+
+Solicitamos hasta cien elementos por página porque GitHub mezcla issues y pull
+requests en este endpoint. Si pidiéramos exactamente diez elementos, una página
+podría contener ocho pull requests y solamente dos issues reales.
+
+La [documentación del endpoint](https://docs.github.com/rest/issues/issues#list-repository-issues)
+indica esta particularidad: para la API, todos los pull requests son issues,
+pero no todos los issues son pull requests.
+
+## Excluir pull requests
+
+`go-github` proporciona `IsPullRequest`, por lo que podemos ignorarlos antes
+de transformar el resultado:
+
+```go
+for _, issue := range issues {
+	if issue.IsPullRequest() {
+		continue
+	}
+
+	result = append(result, Issue{
+		Number: issue.GetNumber(),
+		Title:  issue.GetTitle(),
+		URL:    issue.GetHTMLURL(),
+	})
+
+	if len(result) == options.Limit {
+		return result, nil
+	}
+}
+```
+
+La condición del final es tan importante como el filtro. No queremos descargar
+todo el repositorio para después mostrar únicamente diez resultados. El cliente
+termina en cuanto reúne el límite solicitado.
+
+## El primer enfoque de paginación
+
+La primera versión utilizaba páginas numéricas:
+
+```go
+if response.NextPage == 0 {
+	break
+}
+
+requestOptions.ListOptions.Page = response.NextPage
+```
+
+Funcionaba correctamente con repositorios pequeños y nuestras pruebas cubrían
+dos páginas. Sin embargo, una prueba real con `golang/go` reveló un problema que
+no era visible en los ejemplos reducidos.
+
+El comando permaneció ejecutándose mientras recorría miles de resultados y
+finalmente GitHub respondió:
+
+```text
+422 Pagination with the page parameter is not supported for large datasets,
+please use cursor based pagination (after/before)
+```
+
+La URL del error mostraba que habíamos llegado a `page=100&per_page=100`. El
+problema real no era solamente el tipo de paginación: nuestra primera
+implementación intentaba recuperar todos los issues abiertos antes de imprimir.
+
+## Limitar antes de paginar
+
+El primer ajuste fue aplicar `-limit` tanto a commits como a issues:
+
+```go
+limitValue := flags.Int(
+	"limit",
+	10,
+	"Maximum number of resources to list",
+)
+```
+
+El valor debe ser positivo:
+
+```go
+if *limitValue < 1 {
+	return errors.New(
+		"the -limit option must be greater than zero",
+	)
+}
+```
+
+Con un límite predeterminado de diez, la mayoría de las consultas termina en la
+primera solicitud. Aun así, una página podría contener solamente pull requests,
+por lo que necesitamos una estrategia correcta para continuar.
+
+## Migrar issues a paginación por cursor
+
+La versión utilizada de `go-github` incorpora `ListCursorOptions` para los
+endpoints de issues. Después de procesar una página observamos `response.After`:
+
+```go
+if response.After == "" {
+	break
+}
+
+requestOptions.ListCursorOptions.After = response.After
+```
+
+El flujo completo queda así:
+
+```text
+Solicitar una página
+        │
+        ▼
+Excluir pull requests
+        │
+        ▼
+Transformar issues
+        │
+        ├── alcanzó el límite ──► terminar
+        │
+        └── faltan resultados
+                 │
+                 ▼
+          continuar con after
+```
+
+El cursor identifica dónde continuar sin pedirle a GitHub que calcule una
+página numérica profunda dentro de un conjunto enorme.
+
+## Añadir contexto a los errores
+
+Un error HTTP aislado no siempre indica qué operación falló. Envolvemos el
+error incluyendo el repositorio:
+
+```go
+if err != nil {
+	return nil, fmt.Errorf(
+		"list open issues for %s/%s: %w",
+		ref.Owner,
+		ref.Name,
+		err,
+	)
+}
+```
+
+`%w` conserva el error original para que otra capa pueda inspeccionarlo con
+`errors.Is` o `errors.As`. El mensaje sigue siendo útil para una persona:
+
+```text
+list open issues for golang/go: GET ...
+```
+
+## Configurar autenticación y timeout
+
+La función `main` prepara el cliente real:
+
+```go
+options := []github.ClientOptionsFunc{
+	github.WithTimeout(15 * time.Second),
+}
+
+token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+if token != "" {
+	options = append(
+		options,
+		github.WithAuthToken(token),
+	)
+}
+
+githubClient, err := github.NewClient(options...)
+if err != nil {
+	return
+}
+```
+
+Los repositorios públicos pueden consultarse sin token, pero GitHub aplica un
+límite más restrictivo a las solicitudes anónimas. El token se obtiene del
+entorno; nunca debe escribirse dentro del repositorio.
+
+El timeout evita que una sola solicitud HTTP permanezca bloqueada
+indefinidamente.
+
+## Diseñar una frontera sustituible
+
+`run` no necesita conocer `*githubapi.Client`. Solo necesita algo capaz de
+listar recursos:
+
+```go
+type RepositoryLister interface {
+	ListOpenIssues(
+		ctx context.Context,
+		ref repository.Ref,
+		options githubapi.IssueListOptions,
+	) ([]githubapi.Issue, error)
+}
+```
+
+La interfaz se declara cerca del consumidor. Durante la ejecución utilizamos el
+cliente real; durante las pruebas usamos una implementación falsa:
+
+```go
+type fakeRepositoryLister struct {
+	issues         []githubapi.Issue
+	err            error
+	calls          int
+	receivedRef    repository.Ref
+	receivedOptions githubapi.IssueListOptions
+}
+
+func (fake *fakeRepositoryLister) ListOpenIssues(
+	ctx context.Context,
+	ref repository.Ref,
+	options githubapi.IssueListOptions,
+) ([]githubapi.Issue, error) {
+	fake.calls++
+	fake.receivedRef = ref
+	fake.receivedOptions = options
+
+	return fake.issues, fake.err
+}
+```
+
+Esta implementación no llama a GitHub. Además de controlar el resultado,
+permite comprobar que `run` envió el repositorio y el límite correctos.
+
+## Probar el cliente HTTP sin llamar a GitHub
+
+Para comprobar rutas, parámetros y respuestas utilizamos `httptest.Server`:
+
+```go
+server := httptest.NewServer(http.HandlerFunc(
+	func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set(
+			"Content-Type",
+			"application/json",
+		)
+
+		fmt.Fprint(writer, `[
+			{
+				"number": 12,
+				"title": "Improve documentation",
+				"html_url": "https://github.com/golang/go/issues/12"
+			}
+		]`)
+	},
+))
+defer server.Close()
+```
+
+El cliente de `go-github` puede configurarse para utilizar la URL del servidor
+de prueba. De esta manera verificamos la integración HTTP de forma rápida y
+determinista, sin consumir el rate limit ni depender de la red.
+
+Las pruebas cubren:
+
+- Método y ruta de la solicitud.
+- Estado `open`.
+- Tamaño de página.
+- Exclusión de pull requests.
+- Transformación a nuestro modelo.
+- Propagación de errores.
+- Continuación mediante el cursor `after`.
+- Detención inmediata al alcanzar el límite.
+
+## Probar la detención temprana
+
+Una prueba específica devuelve una cabecera `Link` que anuncia otra página,
+pero configura `Limit: 1`. El cliente debe realizar una sola solicitud:
+
+```go
+if requestCount != 1 {
+	t.Errorf(
+		"ListOpenIssues made %d requests; expected 1",
+		requestCount,
+	)
+}
+```
+
+Esta prueba protege la propiedad que evita repetir el problema encontrado con
+`golang/go`. No basta con comprobar que el resultado contiene un elemento;
+también debemos comprobar que no continuamos descargando páginas.
+
+## Integrar issues en el comando
+
+`issues` es el recurso predeterminado:
+
+```go
+resourceValue := flags.String(
+	"resource",
+	"issues",
+	"Resource to list: issues or commits",
+)
+```
+
+El `switch` entrega opciones explícitas al cliente:
+
+```go
+case "issues":
+	return listIssues(
+		ctx,
+		output,
+		client,
+		ref,
+		githubapi.IssueListOptions{
+			Limit: *limitValue,
+		},
+	)
+```
+
+La función `listIssues` solamente organiza la salida. No contiene lógica HTTP
+ni de paginación.
+
+## Ejecutar el resultado
+
+Podemos consultar el repositorio de Go:
+
+```bash
+go run . \
+  -repo golang/go \
+  -resource issues \
+  -limit 10
+```
+
+Una entrada tiene este formato:
+
+```text
+#81795 crypto/mldsa: GenerateKey and NewPrivateKey allocate the private key twice
+https://github.com/golang/go/issues/81795
+```
+
+La consulta termina después de reunir diez issues. No importa que el
+repositorio contenga miles de resultados abiertos.
+
+## Lecciones de esta entrega
+
+La primera integración externa dejó varias lecciones importantes:
+
+- Un SDK reduce trabajo HTTP, pero no reemplaza las decisiones de diseño.
+- Los tipos externos no necesitan atravesar toda la aplicación.
+- GitHub mezcla pull requests con issues en este endpoint.
+- Limitar la salida no es suficiente; también debemos limitar el trabajo.
+- Las pruebas pequeñas no sustituyen una comprobación acotada contra un
+  repositorio grande.
+- La paginación apropiada depende del endpoint.
+- Las interfaces permiten probar el flujo sin depender de GitHub.
+- Los errores deben conservar su causa y añadir contexto.
+
+Este comportamiento acotado será especialmente importante cuando un agente de
+IA consuma la salida. Entregar miles de issues no solo desperdiciaría
+solicitudes; también produciría un contexto enorme y poco útil.
+
+## Próxima entrega
+
+En la tercera parte incorporaremos commits. Además de reutilizar la frontera
+testeable, resolveremos nuevas preguntas:
+
+- Cómo representar un commit sin exponer todos los tipos de GitHub.
+- Cómo abreviar el SHA y normalizar mensajes de varias líneas.
+- Cómo aplicar límites sin recorrer todo el historial.
+- Cómo filtrar con `-since`, `-until` y períodos como `-last 7d`.
+- Por qué la fecha del autor puede diferir de la fecha de integración.
+
+La herramienta seguirá siendo de solo lectura, pero comenzará a ofrecer el
+contexto temporal que necesitaremos para tareas asistidas por agentes.

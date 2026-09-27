@@ -1,0 +1,452 @@
+export const metadata = {
+  title: "Construyendo gh-agent-cli con Go: commits y filtros temporales",
+  description:
+    "Añadimos commits al CLI, limitamos la paginación y construimos filtros por fechas, días, meses y años con pruebas deterministas.",
+  publishedAt: "2026-09-29",
+  tags: ["Go", "GitHub API", "CLI", "Testing", "Git"],
+  level: "intermedio",
+  language: "es",
+  draft: false,
+  featured: false,
+  series: {
+    slug: "construyendo-gh-agent-cli",
+    title: "Construyendo gh-agent-cli con Go",
+    order: 3,
+  },
+  repositoryUrl: "https://github.com/kenriortega/gh-agent-cli",
+};
+
+En la segunda parte conectamos `gh-agent-cli` con GitHub para consultar issues
+abiertos. Introdujimos un cliente de solo lectura, una interfaz sustituible,
+pruebas HTTP, límites y paginación por cursor.
+
+Ahora añadiremos un segundo recurso: los commits de un repositorio. La operación
+parece similar, pero presenta decisiones diferentes. El endpoint utiliza
+paginación numérica, los mensajes pueden ocupar varias líneas y Git distingue
+entre la fecha del autor y la fecha en que un commit fue integrado.
+
+También incorporaremos filtros temporales para responder preguntas como:
+
+- ¿Qué commits se integraron durante un rango de fechas?
+- ¿Qué actividad tuvo el repositorio durante los últimos siete días?
+- ¿Qué ocurrió en los últimos tres meses o durante el último año?
+
+## El comando que queremos construir
+
+La consulta básica será:
+
+```bash
+go run . \
+  -repo golang/go \
+  -resource commits \
+  -limit 5
+```
+
+Para un rango explícito utilizaremos:
+
+```bash
+go run . \
+  -repo golang/go \
+  -resource commits \
+  -since 2026-09-01 \
+  -until 2026-09-30 \
+  -limit 10
+```
+
+Y para un período relativo:
+
+```bash
+go run . \
+  -repo golang/go \
+  -resource commits \
+  -last 7d \
+  -limit 10
+```
+
+Las tres variantes deben utilizar el mismo cliente y mantener un límite
+predecible sobre el número de resultados.
+
+## Un modelo propio para commits
+
+Como hicimos con los issues, no propagaremos los tipos completos de
+`go-github` por toda la aplicación:
+
+```go
+package githubapi
+
+import "time"
+
+type Commit struct {
+	SHA       string
+	Message   string
+	Author    string
+	CreatedAt time.Time
+	URL       string
+}
+```
+
+El modelo contiene solamente la información necesaria para la salida actual.
+Conservamos el SHA completo, aunque posteriormente mostremos una versión
+abreviada.
+
+Las opciones también tienen un tipo propio:
+
+```go
+type CommitListOptions struct {
+	Limit int
+	Since time.Time
+	Until time.Time
+}
+```
+
+Esta estructura sustituyó una firma inicial que recibía únicamente `limit int`.
+Agrupar las opciones evita añadir un parámetro nuevo al método por cada filtro.
+
+## Extender el contrato sin acoplar `run`
+
+La interfaz consumida por el CLI incorpora la nueva operación:
+
+```go
+type RepositoryLister interface {
+	ListOpenIssues(
+		ctx context.Context,
+		ref repository.Ref,
+		options githubapi.IssueListOptions,
+	) ([]githubapi.Issue, error)
+
+	ListCommits(
+		ctx context.Context,
+		ref repository.Ref,
+		options githubapi.CommitListOptions,
+	) ([]githubapi.Commit, error)
+}
+```
+
+El cliente real implementa ambos métodos. La prueba de `run` utiliza un objeto
+falso que puede devolver issues o commits y registrar cuál operación recibió.
+
+De esta forma podemos verificar una propiedad importante: cuando el usuario
+selecciona `commits`, el CLI no debe consultar issues.
+
+## Consultar commits mediante `go-github`
+
+Las opciones del SDK reciben el rango y el tamaño de página:
+
+```go
+requestOptions := &github.CommitsListOptions{
+	Since: options.Since,
+	Until: options.Until,
+	ListOptions: github.ListOptions{
+		PerPage: options.Limit,
+	},
+}
+```
+
+El endpoint de commits soporta `page` y `per_page`, no cursores `after` o
+`before`. No debemos aplicar automáticamente la estrategia de issues a todos
+los recursos: cada endpoint define su propia forma de paginación.
+
+La protección principal es el límite. Después de transformar un resultado,
+terminamos en cuanto reunimos la cantidad solicitada:
+
+```go
+result = append(result, Commit{
+	SHA:       repositoryCommit.GetSHA(),
+	Message:   gitCommit.GetMessage(),
+	Author:    author.GetName(),
+	CreatedAt: createdAt,
+	URL:       repositoryCommit.GetHTMLURL(),
+})
+
+if len(result) == options.Limit {
+	return result, nil
+}
+```
+
+Con el valor predeterminado de diez, el cliente normalmente realiza una sola
+petición. Si en el futuro permitimos límites mayores que cien, podrá continuar
+utilizando `response.NextPage` hasta alcanzar el total solicitado.
+
+## Transformar la respuesta con getters seguros
+
+`go-github` representa muchos campos mediante punteros. Sus métodos `Get...`
+devuelven el valor cero cuando el puntero es nulo:
+
+```go
+gitCommit := repositoryCommit.GetCommit()
+author := gitCommit.GetAuthor()
+committer := gitCommit.GetCommitter()
+```
+
+La transformación queda aislada dentro del cliente. El resto del programa
+recibe valores simples.
+
+## Autor y fecha de integración no son lo mismo
+
+Durante una prueba real ejecutamos:
+
+```bash
+go run . \
+  -repo golang/go \
+  -resource commits \
+  -last 7d \
+  -limit 5
+```
+
+GitHub devolvió un commit incluido dentro de los últimos siete días, pero la
+fecha mostrada correspondía al mes anterior. La consulta no estaba fallando.
+El commit tenía dos fechas diferentes:
+
+```text
+author.date:    2026-08-31T23:13:03Z
+committer.date: 2026-09-25T20:56:10Z
+```
+
+El autor había creado el cambio en agosto y el repositorio lo integró en
+septiembre. GitHub aplicó el filtro temporal sobre la fecha de integración,
+pero nosotros mostrábamos la del autor.
+
+Para que la salida explique el mismo criterio utilizado por el filtro,
+preferimos la fecha del `committer` y conservamos la del autor como respaldo:
+
+```go
+createdAt := committer.GetDate().Time
+if createdAt.IsZero() {
+	createdAt = author.GetDate().Time
+}
+```
+
+El nombre mostrado sigue siendo el autor del cambio. La fecha representa cuándo
+el commit pasó a formar parte del historial consultado.
+
+Esta diferencia es una buena razón para probar el programa contra repositorios
+reales además de utilizar respuestas controladas.
+
+## Presentar un SHA corto sin perder información
+
+El modelo conserva el SHA completo para futuras operaciones, pero la terminal
+solo necesita una versión legible:
+
+```go
+func shortSHA(sha string) string {
+	const length = 7
+
+	if len(sha) <= length {
+		return sha
+	}
+
+	return sha[:length]
+}
+```
+
+La comprobación de longitud evita un `panic` si una prueba o una fuente externa
+entrega un valor corto.
+
+## Normalizar mensajes con varias líneas
+
+Los commits de merge y los cambios bien documentados suelen incluir un título
+y un cuerpo:
+
+```text
+Merge pull request #38 from kenriortega/development
+
+Development Otel
+```
+
+Imprimir el mensaje completo rompía la estructura visual de cada resultado.
+Para la vista resumida conservamos la primera línea:
+
+```go
+func commitTitle(message string) string {
+	title, _, _ := strings.Cut(message, "\n")
+	return title
+}
+```
+
+El cuerpo no se pierde en GitHub ni en el commit original. Simplemente no forma
+parte de esta salida compacta.
+
+## Dar formato al resultado
+
+La capa del CLI combina el modelo ya transformado:
+
+```go
+fmt.Fprintf(
+	output,
+	"%s %s\n%s | %s\n%s\n",
+	shortSHA(commit.SHA),
+	commitTitle(commit.Message),
+	commit.Author,
+	commit.CreatedAt.Format(time.RFC3339),
+	commit.URL,
+)
+```
+
+Una entrada tiene este aspecto:
+
+```text
+2ff5743 cmd: update vendored x/arch
+Michael Stapelberg | 2026-09-26T22:27:19Z
+https://github.com/golang/go/commit/2ff5743d9fd52fac166225e75df0c2c1edf82abb
+```
+
+## Rangos explícitos con `-since` y `-until`
+
+Las fechas recibidas por el usuario siguen el formato `YYYY-MM-DD`:
+
+```go
+const layout = "2006-01-02"
+
+parsedSince, err := time.Parse(layout, sinceValue)
+```
+
+`time.Parse` utiliza UTC cuando el layout no contiene una zona horaria. La
+fecha inicial representa el comienzo del día.
+
+Para que `-until 2026-09-30` incluya todo el 30 de septiembre, avanzamos al día
+siguiente y restamos un segundo:
+
+```go
+until = parsedUntil.
+	AddDate(0, 0, 1).
+	Add(-time.Second)
+```
+
+El resultado es:
+
+```text
+2026-09-30T23:59:59Z
+```
+
+También validamos que el inicio no sea posterior al final:
+
+```go
+if !since.IsZero() &&
+	!until.IsZero() &&
+	since.After(until) {
+	return time.Time{}, time.Time{}, errors.New(
+		"the -since date must not be after -until",
+	)
+}
+```
+
+Cada extremo puede utilizarse individualmente. El valor cero de `time.Time` se
+omite al construir la solicitud.
+
+## Períodos relativos con `-last`
+
+Además de fechas absolutas aceptamos un número positivo y una unidad:
+
+| Valor | Significado |
+| --- | --- |
+| `7d` | Últimos siete días |
+| `3m` | Últimos tres meses de calendario |
+| `1y` | Último año de calendario |
+
+Separamos la cantidad y la unidad:
+
+```go
+unit := value[len(value)-1]
+amountValue := value[:len(value)-1]
+
+amount, err := strconv.Atoi(amountValue)
+if err != nil || amount < 1 {
+	return time.Time{}, time.Time{}, invalidPeriodError()
+}
+```
+
+Después utilizamos `AddDate`:
+
+```go
+switch unit {
+case 'd':
+	since = now.AddDate(0, 0, -amount)
+case 'm':
+	since = now.AddDate(0, -amount, 0)
+case 'y':
+	since = now.AddDate(-amount, 0, 0)
+default:
+	return time.Time{}, time.Time{}, invalidPeriodError()
+}
+```
+
+No aproximamos un mes como treinta días ni un año como 365. `AddDate` conserva
+la semántica del calendario.
+
+## Evitar filtros ambiguos
+
+`-last` expresa un rango completo relativo al momento actual. Combinarlo con
+`-since` o `-until` crearía una precedencia difícil de explicar. Rechazamos la
+combinación:
+
+```go
+if lastValue != "" {
+	if sinceValue != "" || untilValue != "" {
+		return time.Time{}, time.Time{}, errors.New(
+			"the -last option cannot be combined with -since or -until",
+		)
+	}
+
+	return parseLastPeriod(lastValue, now)
+}
+```
+
+Una interfaz de terminal predecible es preferible a aceptar combinaciones cuyo
+resultado no sea evidente.
+
+## Hacer deterministas las pruebas de tiempo
+
+Las pruebas no llaman directamente a `time.Now`. Entregan un instante fijo:
+
+```go
+now := time.Date(
+	2026, 9, 27, 12, 30, 0, 0, time.UTC,
+)
+
+since, until, err := parseLastPeriod("7d", now)
+```
+
+Así el resultado siempre será el mismo, independientemente del día o la zona
+horaria en que se ejecute la suite.
+
+Las pruebas cubren:
+
+- Días, meses y años.
+- Cantidad cero.
+- Unidad no soportada.
+- Valor sin cantidad.
+- Fechas con formato inválido.
+- Rango invertido.
+- Conflicto entre filtros absolutos y relativos.
+- Envío de las opciones correctas al cliente falso.
+- Paginación y detención al alcanzar el límite.
+
+## Lecciones de esta entrega
+
+La consulta de commits consolidó varias ideas del proyecto:
+
+- Recursos similares pueden requerir paginaciones diferentes.
+- Un objeto de opciones evoluciona mejor que una lista creciente de parámetros.
+- Los límites deben reducir el trabajo, no solamente la salida.
+- La fecha de autor y la fecha de integración representan eventos distintos.
+- La salida humana necesita normalización, aunque el modelo conserve más datos.
+- El tiempo debe inyectarse en las funciones que queremos probar.
+- Los filtros incompatibles deben producir errores explícitos.
+
+Con issues y commits ya tenemos una capa de lectura útil. Sin embargo, una
+salida diseñada para una persona no es todavía el mejor contrato para un agente.
+
+## Próxima entrega
+
+En la cuarta parte diseñaremos la transición de CLI a herramientas para agentes
+de IA. Separaremos lo que ya está implementado de lo que todavía debemos
+construir y definiremos una ruta segura hacia:
+
+- Salida JSON estable.
+- Contratos de herramientas.
+- Operaciones de lectura y escritura claramente separadas.
+- Confirmación humana antes de modificar GitHub.
+- Integración futura con un framework de agentes.
+
+La prioridad seguirá siendo la misma: previsibilidad y seguridad antes de
+autonomía.

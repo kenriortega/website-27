@@ -1,0 +1,440 @@
+export const metadata = {
+  title: "Construyendo gh-agent-cli con Go: del módulo al primer comando",
+  description:
+    "Iniciamos un CLI en Go pensado como base para agentes de IA capaces de trabajar con GitHub, aplicando diseño testeable desde el primer comando.",
+  publishedAt: "2026-09-27",
+  tags: ["Go", "GitHub API", "CLI", "Testing", "Agentes de IA"],
+  level: "intermedio",
+  language: "es",
+  draft: false,
+  featured: false,
+  series: {
+    slug: "construyendo-gh-agent-cli",
+    title: "Construyendo gh-agent-cli con Go",
+    order: 1,
+  },
+  repositoryUrl: "https://github.com/kenriortega/gh-agent-cli",
+};
+
+Quería volver a programar en Go mediante un proyecto pequeño, pero con espacio
+para crecer. Al mismo tiempo, me interesaba explorar cómo un agente de IA puede
+trabajar con GitHub sin comenzar por una automatización demasiado ambiciosa.
+
+De esa combinación nació `gh-agent-cli`: una herramienta de terminal que irá
+incorporando operaciones sobre repositorios de GitHub y que, más adelante,
+podrá convertirse en la capa de herramientas de un agente.
+
+En esta serie no comenzaremos conectando un modelo de lenguaje. Primero
+construiremos una base determinista, testeable y segura. Un agente puede razonar
+sobre una tarea, pero necesita herramientas con contratos claros para consultar
+datos o ejecutar una acción. Nuestro CLI será ese contrato.
+
+## El recorrido de la serie
+
+Dividiremos el proyecto en cuatro entregas:
+
+1. Inicializar el módulo, representar un repositorio y construir el primer
+   comando.
+2. Consultar issues mediante un cliente de GitHub de solo lectura.
+3. Consultar commits y filtrarlos por límites y períodos de tiempo.
+4. Preparar el CLI para convertirse en una herramienta utilizada por agentes
+   de IA.
+
+Esta primera parte se concentra deliberadamente en los fundamentos. Al
+terminar tendremos un ejecutable pequeño que acepta un repositorio en formato
+`owner/name`, valida su entrada y cuenta con pruebas unitarias.
+
+## Por qué comenzar por un CLI
+
+Antes de pensar en prompts, memoria o planificación, necesitamos resolver
+preguntas más básicas:
+
+- ¿Cómo representamos un repositorio?
+- ¿Qué ocurre cuando el usuario escribe un valor inválido?
+- ¿Cómo separamos la salida del programa de la lógica que queremos probar?
+- ¿Cómo evitamos que `main` acumule todas las responsabilidades?
+- ¿Qué partes podrán sustituirse por objetos falsos durante las pruebas?
+
+Un CLI resulta útil para responder estas preguntas porque ofrece un ciclo de
+trabajo corto: podemos ejecutar una operación, observar su salida y comprobar
+el mismo comportamiento con una prueba automatizada.
+
+También establece una frontera de seguridad. En las primeras entregas todas
+las operaciones serán de solo lectura. No crearemos ni cerraremos issues y
+tampoco modificaremos repositorios.
+
+## Inicializar el proyecto
+
+Creamos el directorio del proyecto e inicializamos el módulo:
+
+```bash
+mkdir github-agent-cli
+cd github-agent-cli
+go mod init github.com/kenriortega/gh-agent-cli
+```
+
+El archivo `go.mod` identifica el módulo que utilizarán los imports internos:
+
+```go
+module github.com/kenriortega/gh-agent-cli
+```
+
+En esta etapa todavía no necesitamos un framework de comandos. La biblioteca
+estándar de Go incluye `flag`, suficiente para validar nuestra primera opción.
+Más adelante podremos reevaluar esa decisión si el número de comandos y
+subcomandos lo justifica.
+
+## Una estructura mínima
+
+El primer hito utiliza solamente tres piezas:
+
+```text
+github-agent-cli
+├── go.mod
+├── main.go
+└── internal
+    └── repository
+        ├── ref.go
+        └── ref_test.go
+```
+
+`main.go` se ocupa de la entrada y salida del proceso. El paquete interno
+`repository` contiene el concepto de repositorio que utilizarán las siguientes
+capas.
+
+Colocarlo bajo `internal` expresa una decisión: este código pertenece a la
+aplicación y no se presenta todavía como una biblioteca pública para otros
+módulos.
+
+## Representar una referencia de repositorio
+
+La API de GitHub necesita dos valores para localizar un repositorio: su
+propietario y su nombre. En lugar de transportar el texto original por todo el
+programa, definimos un tipo pequeño:
+
+```go
+package repository
+
+type Ref struct {
+	Owner string
+	Name  string
+}
+```
+
+Así podemos convertir una entrada como `golang/go` en una estructura explícita:
+
+```go
+repository.Ref{
+	Owner: "golang",
+	Name:  "go",
+}
+```
+
+El tipo evita que otras capas tengan que dividir el texto repetidamente y
+reduce la posibilidad de intercambiar accidentalmente el propietario y el
+nombre.
+
+## Validar en el límite del sistema
+
+El usuario proporciona la referencia mediante la terminal, por lo que no
+debemos asumir que siempre tendrá el formato correcto. La función `Parse`
+centraliza esa validación:
+
+```go
+package repository
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+)
+
+func Parse(value string) (Ref, error) {
+	trimmed := strings.TrimSpace(value)
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 2 {
+		return Ref{}, fmt.Errorf(
+			"invalid repository reference: %q",
+			value,
+		)
+	}
+
+	owner := parts[0]
+	name := parts[1]
+
+	if owner == "" || name == "" {
+		return Ref{}, fmt.Errorf(
+			"invalid repository reference: %q",
+			value,
+		)
+	}
+
+	if strings.IndexFunc(owner, unicode.IsSpace) >= 0 ||
+		strings.IndexFunc(name, unicode.IsSpace) >= 0 {
+		return Ref{}, fmt.Errorf(
+			"invalid repository reference: %q",
+			value,
+		)
+	}
+
+	return Ref{
+		Owner: owner,
+		Name:  name,
+	}, nil
+}
+```
+
+La función acepta espacios alrededor del valor completo, pero no dentro del
+propietario o del repositorio. También rechaza referencias incompletas y
+valores con más de un separador.
+
+Algunas entradas que debemos considerar son:
+
+| Entrada | Resultado |
+| --- | --- |
+| `golang/go` | Válida |
+| `  golang/go  ` | Válida después de eliminar espacios externos |
+| `/go` | Inválida: falta el propietario |
+| `golang/` | Inválida: falta el repositorio |
+| `go` | Inválida: falta el separador |
+| `golang/tools/go` | Inválida: contiene demasiadas partes |
+| `go lang/go` | Inválida: contiene espacios internos |
+
+Validar aquí simplifica todo lo que construiremos después. El cliente de
+GitHub recibirá siempre una `Ref` que ya cumple nuestro contrato.
+
+## Probar el parser con una tabla
+
+El parser tiene varias combinaciones pequeñas. Una prueba basada en tabla nos
+permite describirlas sin duplicar la estructura de cada test:
+
+```go
+func TestParse(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		expected   Ref
+		expectsErr bool
+	}{
+		{
+			name:     "valid reference",
+			input:    "golang/go",
+			expected: Ref{Owner: "golang", Name: "go"},
+		},
+		{
+			name:       "missing owner",
+			input:      "/go",
+			expectsErr: true,
+		},
+		{
+			name:       "missing separator",
+			input:      "go",
+			expectsErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := Parse(test.input)
+
+			if test.expectsErr {
+				if err == nil {
+					t.Fatalf(
+						"Parse(%q) expected an error",
+						test.input,
+					)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf(
+					"Parse(%q) returned an unexpected error: %v",
+					test.input,
+					err,
+				)
+			}
+
+			if result != test.expected {
+				t.Errorf(
+					"Parse(%q) = %+v; expected %+v",
+					test.input,
+					result,
+					test.expected,
+				)
+			}
+		})
+	}
+}
+```
+
+La prueba no conoce nada sobre la terminal ni sobre GitHub. Solo verifica el
+contrato del paquete `repository`, lo cual facilita localizar un fallo.
+
+Podemos ejecutarla de forma aislada:
+
+```bash
+go test ./internal/repository -v
+```
+
+## Un `main` pequeño
+
+La función `main` debe ocuparse del comportamiento propio de un proceso:
+obtener argumentos, escribir en la salida estándar y decidir el código de
+salida. La lógica comprobable vive en `run`:
+
+```go
+func main() {
+	if err := run(os.Args[1:], os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+```
+
+Esta separación evita que las pruebas tengan que reemplazar `os.Args` o
+capturar globalmente `os.Stdout`.
+
+## Construir el primer comando
+
+La versión inicial de `run` recibe los argumentos y un `io.Writer` donde
+escribirá el resultado:
+
+```go
+func run(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet(
+		"gh-agent-cli",
+		flag.ContinueOnError,
+	)
+
+	repositoryValue := flags.String(
+		"repo",
+		"",
+		"GitHub repository in owner/name format",
+	)
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	if *repositoryValue == "" {
+		return errors.New("the -repo option is required")
+	}
+
+	ref, err := repository.Parse(*repositoryValue)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(
+		output,
+		"owner: %s\nrepository: %s\n",
+		ref.Owner,
+		ref.Name,
+	)
+
+	return nil
+}
+```
+
+Aquí aparecen dos decisiones que seguiremos utilizando:
+
+- `flag.NewFlagSet` permite analizar un conjunto de argumentos proporcionado
+  por la prueba, en lugar de depender del `flag.CommandLine` global.
+- `io.Writer` permite enviar la salida a la terminal en producción y a un
+  `bytes.Buffer` durante las pruebas.
+
+La opción `flag.ContinueOnError` hace que el parser devuelva los errores. Así
+`run` puede propagarlos y `main` conserva la decisión de finalizar el proceso.
+
+## Probar el comando sin ejecutar otro proceso
+
+No necesitamos compilar el binario ni iniciar un subproceso para probar `run`:
+
+```go
+func TestRun(t *testing.T) {
+	var output bytes.Buffer
+
+	err := run(
+		[]string{"-repo", "golang/go"},
+		&output,
+	)
+	if err != nil {
+		t.Fatalf("run returned an unexpected error: %v", err)
+	}
+
+	expected := "owner: golang\nrepository: go\n"
+	if output.String() != expected {
+		t.Errorf(
+			"run output = %q; expected %q",
+			output.String(),
+			expected,
+		)
+	}
+}
+```
+
+Este diseño también permite cubrir la ausencia de `-repo` y las referencias
+inválidas sin modificar variables globales.
+
+## Ejecutar la primera versión
+
+Con la prueba en verde, podemos ejecutar el programa:
+
+```bash
+go run . -repo golang/go
+```
+
+La primera versión produce una salida sencilla:
+
+```text
+owner: golang
+repository: go
+```
+
+Todavía no estamos consultando la API. Este resultado confirma que el CLI
+recibe, valida y transforma la referencia correctamente antes de introducir
+una dependencia externa.
+
+## Guardar un hito pequeño
+
+El primer commit del proyecto encapsuló exactamente este avance:
+
+```text
+feat(cli): add repository reference input
+```
+
+Mantener commits pequeños facilita revisar la evolución del diseño. También
+nos permitirá observar en las próximas entregas cuándo incorporamos el cliente
+de GitHub, cómo introdujimos una interfaz y qué pruebas aparecieron para cada
+riesgo.
+
+## Lo aprendido en esta primera parte
+
+Aunque el programa todavía es pequeño, ya establecimos varias decisiones que
+sostendrán el resto del proyecto:
+
+- Los datos externos se validan al entrar en el sistema.
+- Una referencia de repositorio tiene un tipo propio.
+- `main` administra el proceso y delega la lógica a `run`.
+- Los argumentos y la salida se pueden sustituir durante las pruebas.
+- Cada hito debe ser pequeño, ejecutable y verificable.
+- Las primeras operaciones serán de solo lectura.
+
+Esta base parece más extensa que dividir directamente el texto `golang/go`
+dentro de `main`, pero comienza a dar valor en cuanto agregamos la primera
+integración externa.
+
+## Próxima entrega
+
+En la segunda parte conectaremos `gh-agent-cli` con la API de GitHub para
+obtener issues abiertos. Allí aparecerán nuevos problemas:
+
+- Autenticación opcional con `GITHUB_TOKEN`.
+- Un cliente HTTP con timeout.
+- Una interfaz que podamos sustituir en las pruebas.
+- La diferencia entre issues y pull requests en la API de GitHub.
+- Límites y paginación por cursor para repositorios grandes.
+
+El objetivo seguirá siendo el mismo: construir una herramienta confiable antes
+de entregársela a un agente de IA.

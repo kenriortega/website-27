@@ -36,6 +36,14 @@ const articleLoaders = {
     import(
       "@/content/articles/github-actions-workflows-reutilizables-repositorios-remotos.mdx"
     ),
+  "construyendo-gh-agent-cli-parte-1": () =>
+    import("@/content/articles/construyendo-gh-agent-cli-parte-1.mdx"),
+  "construyendo-gh-agent-cli-parte-2": () =>
+    import("@/content/articles/construyendo-gh-agent-cli-parte-2.mdx"),
+  "construyendo-gh-agent-cli-parte-3": () =>
+    import("@/content/articles/construyendo-gh-agent-cli-parte-3.mdx"),
+  "construyendo-gh-agent-cli-parte-4": () =>
+    import("@/content/articles/construyendo-gh-agent-cli-parte-4.mdx"),
 } as const;
 
 type ArticleSlug = keyof typeof articleLoaders;
