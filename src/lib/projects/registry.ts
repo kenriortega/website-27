@@ -2,6 +2,64 @@ import type { Project } from "./types";
 
 const projects = [
   {
+    slug: "gym-progress",
+    title: "Gym Progress",
+    summary:
+      "PWA mobile-first para planificar entrenamientos, registrar cada serie y convertir el historial en decisiones de progresión.",
+    overview:
+      "Gym Progress es una aplicación personal para llevar el entrenamiento de fuerza desde el móvil. Organiza planes por día, acompaña cada sesión con el contexto de la anterior y registra peso, repeticiones y RPE, incluso cuando la conexión es inestable.",
+    challenge:
+      "Registrar un entrenamiento en una hoja de cálculo o en una aplicación genérica introduce demasiada fricción entre series. Necesitaba una herramienta rápida, enfocada en el móvil y capaz de recordar qué hice la última vez sin dejar de funcionar cuando la cobertura del gimnasio falla.",
+    solution:
+      "Construí una PWA con un recorrido centrado en la sesión activa: planes reutilizables por día, objetivos de series y repeticiones, valores de la sesión anterior, temporizador de descanso, calculadora de discos y sugerencias de progresión. Una cola local conserva los cambios sin conexión y los sincroniza de forma segura al recuperar la red.",
+    contribution:
+      "Diseñé e implementé el producto completo: experiencia mobile-first, modelo relacional, autenticación, acciones de servidor, estrategia offline y despliegue. También trabajé la experiencia en pantallas grandes, los estados de carga y error, la privacidad de la analítica y la instalación como aplicación.",
+    learnings: [
+      "Diseñar formularios de uso repetitivo para reducir pulsaciones durante una sesión.",
+      "Mantener una experiencia coherente entre datos del servidor y operaciones pendientes en IndexedDB.",
+      "Modelar planes, sesiones, ejercicios y series sin perder el contexto histórico.",
+      "Convertir reglas de progresión deportiva en sugerencias conservadoras y explicables.",
+      "Construir una PWA instalable con rutas y datos útiles cuando no hay conexión.",
+    ],
+    year: 2026,
+    publishedAt: "2026-10-04",
+    status: "active",
+    featured: true,
+    technologies: [
+      "Next.js",
+      "TypeScript",
+      "React",
+      "PostgreSQL",
+      "Drizzle ORM",
+      "Auth.js",
+      "Tailwind CSS",
+      "Serwist",
+      "IndexedDB",
+    ],
+    repositoryUrl: "https://github.com/kenriortega/gym-progress",
+    highlights: [
+      "Planes reutilizables organizados por día de la semana.",
+      "Registro de peso, repeticiones, RPE y notas de sesión.",
+      "Referencia inmediata de las series realizadas en la sesión anterior.",
+      "Sugerencias de progresión basadas en rendimiento y tiempo de adaptación.",
+      "Temporizador de descanso y calculadora de discos integrados.",
+      "Historial de entrenamientos y evolución por ejercicio.",
+      "Cola offline persistente con sincronización ordenada e idempotente.",
+      "Aplicación instalable con autenticación mediante Google.",
+    ],
+    videos: [],
+    images: [
+      {
+        src: "/projects/gym-progress/cover.png",
+        alt: "Teléfono con el panel de Gym Progress conectado a módulos de planes, series, progreso y sincronización offline",
+        width: 1891,
+        height: 831,
+        caption:
+          "Gym Progress reúne planificación, registro, análisis y continuidad offline en una experiencia pensada para el gimnasio.",
+      },
+    ],
+  },
+  {
     slug: "issues-tracker-pipeline",
     title: "Issues Tracker Pipeline",
     summary:

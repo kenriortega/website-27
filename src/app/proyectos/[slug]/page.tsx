@@ -30,7 +30,7 @@ const referenceTypeLabels = {
   publication: "Publicación técnica",
 } as const;
 
-function formatReferenceDate(publishedAt: string) {
+function formatDate(publishedAt: string) {
   return new Intl.DateTimeFormat("es", {
     day: "numeric",
     month: "long",
@@ -173,7 +173,13 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
               {statusLabels[project.status]}
             </span>
             <span aria-hidden="true">·</span>
-            <span>{project.year}</span>
+            {project.publishedAt ? (
+              <time dateTime={project.publishedAt}>
+                {formatDate(project.publishedAt)}
+              </time>
+            ) : (
+              <span>{project.year}</span>
+            )}
           </div>
 
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">
@@ -357,7 +363,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
                       <>
                         <span aria-hidden="true">·</span>
                         <time dateTime={reference.publishedAt}>
-                          {formatReferenceDate(reference.publishedAt)}
+                          {formatDate(reference.publishedAt)}
                         </time>
                       </>
                     ) : null}

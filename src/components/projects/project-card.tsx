@@ -16,6 +16,15 @@ const statusLabels: Record<ProjectStatus, string> = {
   "open-source": "Open source",
 };
 
+function formatProjectDate(publishedAt: string) {
+  return new Intl.DateTimeFormat("es", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(publishedAt));
+}
+
 export function ProjectCard({
   project,
   headingLevel = "h2",
@@ -42,7 +51,13 @@ export function ProjectCard({
         <div className="flex flex-wrap items-center gap-3 font-mono text-sm text-muted">
           <span className="text-accent">{statusLabels[project.status]}</span>
           <span aria-hidden="true">·</span>
-          <span>{project.year}</span>
+          {project.publishedAt ? (
+            <time dateTime={project.publishedAt}>
+              {formatProjectDate(project.publishedAt)}
+            </time>
+          ) : (
+            <span>{project.year}</span>
+          )}
         </div>
 
         <Heading className="mt-5 text-2xl font-semibold tracking-tight">

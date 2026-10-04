@@ -37,6 +37,7 @@ export type Project = {
   contribution?: string;
   learnings?: string[];
   year: number;
+  publishedAt?: string;
   status: ProjectStatus;
   featured?: boolean;
   technologies: string[];
